@@ -1,0 +1,24 @@
+var searchData=
+[
+  ['packed',['Packed',['../structIpcBufferDescriptor.html#a6d41e59f211aa906082744fd9a2e9ce4',1,'IpcBufferDescriptor::Packed()'],['../structIpcStaticSendDescriptor.html#aa65035a0d1613750347f3933e0486485',1,'IpcStaticSendDescriptor::Packed()'],['../structIpcStaticRecvDescriptor.html#aebf5a4cf83b96f284e3d76f2da7beab1',1,'IpcStaticRecvDescriptor::Packed()'],['../types_8h.html#a36d525cf4d116b2fe4ecc00222b256f1',1,'PACKED():&#160;types.h']]],
+  ['pad2',['pad2',['../structFsDirectoryEntry.html#a2b2489359e3968a779ab09f41c842f7a',1,'FsDirectoryEntry']]],
+  ['padding',['padding',['../structMemoryInfo.html#ac953a541d559dc500a555471ca874ad3',1,'MemoryInfo']]],
+  ['param',['param',['../structAppletHookCookie.html#a0784788d5fd60758d97a52c63efc7c68',1,'AppletHookCookie']]],
+  ['parcel',['Parcel',['../structParcel.html',1,'']]],
+  ['parent',['parent',['../structromfs__dir.html#a7d7aa924be9730d3c887b8ec715cfec5',1,'romfs_dir::parent()'],['../structromfs__file.html#aa8a3d86e5375a482ba8fad62e8505ae7',1,'romfs_file::parent()']]],
+  ['perm',['perm',['../structSharedMemory.html#a67180a14a5bd90113a324d74015c47d4',1,'SharedMemory::perm()'],['../structMemoryInfo.html#a224b48fa631a705e922521236b910725',1,'MemoryInfo::perm()'],['../structTransferMemory.html#a31f60f0f83f3cfbf7ff35621edc431b8',1,'TransferMemory::perm()']]],
+  ['perm_5fdontcare',['Perm_DontCare',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200caea28058376beab491fb57a0cc9a802cf',1,'svc.h']]],
+  ['perm_5fnone',['Perm_None',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca4212f419c58a6ad520155347955e0751',1,'svc.h']]],
+  ['perm_5fr',['Perm_R',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca7a1e8798ee89e46e527ac5568cf81801',1,'svc.h']]],
+  ['perm_5frw',['Perm_Rw',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca57ac3963c1fe3f280b59c6f2eaf491e1',1,'svc.h']]],
+  ['perm_5frx',['Perm_Rx',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca1bf74d986219ad6b62ae06dc61b3e1b6',1,'svc.h']]],
+  ['perm_5fw',['Perm_W',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca00886aee335d55c075c1f0ee3100ee9f',1,'svc.h']]],
+  ['perm_5fx',['Perm_X',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200ca48288defc34d874293c9e74141989f59',1,'svc.h']]],
+  ['permission',['Permission',['../svc_8h.html#a1474fa581c530fcdc28ca0a11770200c',1,'svc.h']]],
+  ['pid',['Pid',['../structIpcParsedCommand.html#ad2279dc2a9b2f6c80d36888a25138f45',1,'IpcParsedCommand']]],
+  ['pm_2eh',['pm.h',['../pm_8h.html',1,'']]],
+  ['prevcursorx',['prevCursorX',['../structPrintConsole.html#a5597cf20da49284bcb2ccadfbd095c02',1,'PrintConsole']]],
+  ['prevcursory',['prevCursorY',['../structPrintConsole.html#a643913cb7f20767b07ecf1652b788245',1,'PrintConsole']]],
+  ['printchar',['PrintChar',['../structPrintConsole.html#ac2a6a9e9c3adda6c2e6ac11e4ebb7d14',1,'PrintConsole']]],
+  ['printconsole',['PrintConsole',['../structPrintConsole.html',1,'']]]
+];
