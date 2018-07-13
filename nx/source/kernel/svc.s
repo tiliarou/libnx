@@ -229,6 +229,32 @@ SVC_BEGIN svcGetInfo
 	ret
 SVC_END
 
+SVC_BEGIN svcMapPhysicalMemory
+	svc 0x2A
+	ret
+SVC_END
+
+SVC_BEGIN svcUnmapPhysicalMemory
+	svc 0x2B
+	ret
+SVC_END
+
+SVC_BEGIN svcGetResourceLimitLimitValue
+	str x0, [sp, #-16]!
+	svc 0x30
+	ldr x2, [sp], #16
+	str x1, [x2]
+	ret
+SVC_END
+
+SVC_BEGIN svcGetResourceLimitCurrentValue
+	str x0, [sp, #-16]!
+	svc 0x31
+	ldr x2, [sp], #16
+	str x1, [x2]
+	ret
+SVC_END
+
 SVC_BEGIN svcSetThreadActivity
 	svc 0x32
 	ret
@@ -276,7 +302,22 @@ SVC_BEGIN svcCreateEvent
 	ret
 SVC_END
 
-SVC_BEGIN svcCreateJitMemory
+SVC_BEGIN svcMapPhysicalMemoryUnsafe
+	svc 0x48
+	ret
+SVC_END
+
+SVC_BEGIN svcUnmapPhysicalMemoryUnsafe
+	svc 0x49
+	ret
+SVC_END
+
+SVC_BEGIN svcSetUnsafeLimit
+	svc 0x4A
+	ret
+SVC_END
+
+SVC_BEGIN svcCreateCodeMemory
 	str x0, [sp, #-16]!
 	svc 0x4B
 	ldr x2, [sp], #16
@@ -284,7 +325,7 @@ SVC_BEGIN svcCreateJitMemory
 	ret
 SVC_END
 
-SVC_BEGIN svcMapJitMemory
+SVC_BEGIN svcControlCodeMemory
 	svc 0x4C
 	ret
 SVC_END
@@ -404,6 +445,14 @@ SVC_BEGIN svcGetProcessList
 	ret
 SVC_END
 
+SVC_BEGIN svcGetThreadList
+	str x0, [sp, #-16]!
+	svc 0x66
+	ldr x2, [sp], #16
+	str w1, [x2]
+	ret
+SVC_END
+
 SVC_BEGIN svcGetDebugThreadContext
 	svc 0x67
 	ret
@@ -424,6 +473,15 @@ SVC_END
 
 SVC_BEGIN svcWriteDebugProcessMemory
 	svc 0x6B
+	ret
+SVC_END
+
+SVC_BEGIN svcGetDebugThreadParam
+	stp x0, x1, [sp, #-16]!
+	svc 0x6D
+	ldp x3, x4, [sp], #16
+	str x1, [x3]
+	str w2, [x4]
 	ret
 SVC_END
 
@@ -500,6 +558,27 @@ SVC_END
 
 SVC_BEGIN svcTerminateProcess
 	svc 0x7B
+	ret
+SVC_END
+
+SVC_BEGIN svcGetProcessInfo
+	str x0, [sp, #-16]!
+	svc 0x7C
+	ldr x2, [sp], #16
+	str w1, [x2]
+	ret
+SVC_END
+
+SVC_BEGIN svcCreateResourceLimit
+	str x0, [sp, #-16]!
+	svc 0x7D
+	ldr x2, [sp], #16
+	str w1, [x2]
+	ret
+SVC_END
+
+SVC_BEGIN svcSetResourceLimitLimitValue
+	svc 0x7E
 	ret
 SVC_END
 

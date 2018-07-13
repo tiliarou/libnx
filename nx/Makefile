@@ -9,7 +9,7 @@ endif
 include $(DEVKITPRO)/devkitA64/base_rules
 
 export LIBNX_MAJOR	:= 1
-export LIBNX_MINOR	:= 1
+export LIBNX_MINOR	:= 3
 export LIBNX_PATCH	:= 0
 
 
@@ -104,8 +104,8 @@ dist-src:
 dist: dist-src dist-bin
 
 install: dist-bin
-	mkdir -p $(DEVKITPRO)/libnx
-	bzip2 -cd libnx-$(VERSION).tar.bz2 | tar -xf - -C $(DEVKITPRO)/libnx
+	mkdir -p $(DESTDIR)$(DEVKITPRO)/libnx
+	bzip2 -cd libnx-$(VERSION).tar.bz2 | tar -xf - -C $(DESTDIR)$(DEVKITPRO)/libnx
 
 #dox:
 #	@doxygen Doxyfile

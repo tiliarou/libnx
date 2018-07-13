@@ -21,7 +21,10 @@
 #include "runtime/devices/socket.h"
 #include "services/bsd.h"
 #include "services/sfdnsres.h"
+#include "services/nifm.h"
 #include "result.h"
+
+int _convert_errno(int bsdErrno);
 
 __thread int h_errno;
 
@@ -189,7 +192,8 @@ static int _socketParseBsdResult(struct _reent *r, int ret) {
             }
         }
         else
-            errno_ = g_bsdErrno; // Nintendo actually used the Linux errno definitions for their FreeBSD build :)
+            errno_ = _convert_errno(g_bsdErrno); /* Nintendo actually used the Linux errno definitions for their FreeBSD build :)
+                                                    but we still need to convert to newlib errno */
     }
 
     if(r == NULL)
@@ -202,6 +206,7 @@ static int _socketParseBsdResult(struct _reent *r, int ret) {
 
 static int _socketOpen(struct _reent *r, void *fdptr, const char *path, int flags, int mode) {
     (void)mode;
+    if(strncmp(path, "soc:", 4)==0) path+= 4;
     int ret = _socketParseBsdResult(r, bsdOpen(path, flags));
     if(ret == -1)
         return ret;
@@ -296,21 +301,21 @@ int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struc
         || (exceptfds && FD_ISSET(i, exceptfds))) {
 
             if(readfds && FD_ISSET(i, readfds)) {
-                if(pollinfo[j].events & (POLLIN|POLLHUP))
+                if(pollinfo[j].revents & (POLLIN|POLLHUP))
                     found = 1;
                 else
                     FD_CLR(i, readfds);
             }
 
             if(writefds && FD_ISSET(i, writefds)) {
-                if(pollinfo[j].events & (POLLOUT|POLLHUP))
+                if(pollinfo[j].revents & (POLLOUT|POLLHUP))
                     found = 1;
                 else
                     FD_CLR(i, writefds);
             }
 
             if(exceptfds && FD_ISSET(i, exceptfds)) {
-                if(pollinfo[j].events & POLLERR)
+                if(pollinfo[j].revents & POLLERR)
                     found = 1;
                 else
                     FD_CLR(i, exceptfds);
@@ -828,7 +833,7 @@ static int inet_pton4(const char *src, void *dst) {
     size_t numBytes;
 
     int ret = _socketInetAtonDetail(&base, &numBytes, src, (struct in_addr *)dst);
-    return (ret == 1 && base == 10 && numBytes == 4) ? 1 : 0;
+    return (ret == 1 && base == 10 && numBytes == 3) ? 1 : 0;
 }
 
 /* Copyright (c) 1996 by Internet Software Consortium.
@@ -1108,6 +1113,7 @@ static struct hostent *_socketDeserializeHostent(int *err, const void *out_he_se
     size_t name_size, total_aliases_size = 0;
     size_t nb_addresses;
     size_t nb_aliases = 0;
+    size_t nb_pos;
     size_t len;
 
     int addrtype, addrlen;
@@ -1117,19 +1123,24 @@ static struct hostent *_socketDeserializeHostent(int *err, const void *out_he_se
     pos = buf;
     name_size = strlen(pos) + 1;
     pos += name_size;
+
+    nb_aliases = ntohl(*(const u32 *)pos);
+    pos += 4;
+
     pos_aliases = pos;
-    for(pos = buf, len = 1; len != 0; pos += len + 1) {
-        len = strlen(buf);
-        if(len != 0)
-            nb_aliases++;
+
+    if(nb_aliases>0) {
+        for(nb_pos=0, len = 1; nb_pos<nb_aliases; nb_pos++, pos += len + 1) {
+            len = strlen(pos);
+        }
     }
 
-    total_aliases_size = pos - pos_aliases - 1;
+    total_aliases_size = pos - pos_aliases;
 
     // Nintendo uses unsigned short here...
-    addrtype = ntohl(*(const u16 *)pos);
+    addrtype = htons(*(const u16 *)pos);
     pos += 2;
-    addrlen = ntohl(*(const u16 *)pos);
+    addrlen = htons(*(const u16 *)pos);
     pos += 2;
 
     // sfdnsres will only return IPv4 addresses for the "host" commands
@@ -1139,8 +1150,11 @@ static struct hostent *_socketDeserializeHostent(int *err, const void *out_he_se
     }
 
     // The official hostent (de)serializer doesn't support IPv6, at least not currently.
+    nb_addresses = ntohl(*(const u32 *)pos);
+    pos += 4;
+
     pos_addresses = pos;
-    for(nb_addresses = 0; ((const struct in_addr *)pos)->s_addr != 0; nb_addresses++);
+    pos += addrlen * nb_addresses;
 
     he = (struct hostent *)malloc(
         sizeof(struct hostent)
@@ -1167,19 +1181,23 @@ static struct hostent *_socketDeserializeHostent(int *err, const void *out_he_se
         memcpy(he->h_name, buf, name_size);
     }
 
-    char *alias = (char *)(he->h_addr_list + nb_addresses + 1);
-    memcpy(alias, pos_aliases, total_aliases_size);
-    for(size_t i = 0; i < nb_aliases; i++) {
-        he->h_aliases[i] = alias;
-        alias += strlen(alias) + 1;
+    if(nb_aliases>0) {
+        char *alias = (char *)(he->h_addr_list + nb_addresses + 1);
+        memcpy(alias, pos_aliases, total_aliases_size);
+        for(size_t i = 0; i < nb_aliases; i++) {
+            he->h_aliases[i] = alias;
+            alias += strlen(alias) + 1;
+        }
     }
     he->h_aliases[nb_aliases] = NULL;
 
-    struct in_addr *addresses = (struct in_addr *)(he->h_addr_list + nb_addresses + 1 + total_aliases_size);
-    memcpy(addresses, pos_addresses, addrlen * nb_addresses);
-    for(size_t i = 0; i < nb_addresses; i++) {
-        he->h_addr_list[i] = (char *)&addresses[i];
-        addresses[i].s_addr = ntohl(addresses[i].s_addr); // lol Nintendo
+    if(nb_addresses>0) {
+        struct in_addr *addresses = (struct in_addr *)(he->h_addr_list + nb_addresses + 1 + total_aliases_size);
+        memcpy(addresses, pos_addresses, addrlen * nb_addresses);
+        for(size_t i = 0; i < nb_addresses; i++) {
+            he->h_addr_list[i] = (char *)&addresses[i];
+            addresses[i].s_addr = ntohl(addresses[i].s_addr); // lol Nintendo
+        }
     }
     he->h_addr_list[nb_addresses] = NULL;
 
@@ -1299,13 +1317,13 @@ static struct addrinfo *_socketDeserializeAddrInfo(size_t *out_len, const struct
         // Nintendo just byteswaps everything recursively... even fields that are already byteswapped.
         switch(node->info.ai_family) {
             case AF_INET: {
-                struct sockaddr_in *sa = (struct sockaddr_in *)&node->info.ai_addr;
+                struct sockaddr_in *sa = (struct sockaddr_in *)node->info.ai_addr;
                 sa->sin_port = ntohs(sa->sin_port);
                 sa->sin_addr.s_addr = ntohl(sa->sin_addr.s_addr);
                 break;
             }
             case AF_INET6: {
-                struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)&node->info.ai_addr;
+                struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)node->info.ai_addr;
                 sa6->sin6_port = ntohs(sa6->sin6_port);
                 sa6->sin6_flowinfo = ntohl(sa6->sin6_flowinfo);
                 sa6->sin6_scope_id = ntohl(sa6->sin6_scope_id);
@@ -1566,25 +1584,13 @@ cleanup:
     return gaie;
 }
 
-// Unimplementable functions, left for compliance:
-struct hostent *gethostent(void) { return NULL; }
-struct netent *getnetbyaddr(uint32_t a, int b) { (void)a; (void)b; return NULL; }
-struct netent *getnetbyname(const char *s) { (void)s; return NULL; }
-struct netent *getnetent(void) { return NULL; }
-struct protoent *getprotobyname(const char *s) { (void)s; return NULL; }
-struct protoent *getprotobynumber(int a) { (void)a; return NULL; }
-struct protoent *getprotoent(void) { return NULL; }
-struct servent *getservbyname(const char *s1, const char *s2) { (void)s1; (void)s2; return NULL; }
-struct servent *getservbyport(int a, const char *s) { (void)a; (void)s; return NULL; }
-struct servent *getservent(void) { return NULL; }
-void sethostent(int a) { (void)a;}
-void setnetent(int a) { (void)a;}
-void setprotoent(int a) { (void)a; }
-
-/************************************************************************************************************************/
-
 long gethostid(void) {
-    return INADDR_LOOPBACK; //FIXME
+    Result rc;
+    u32 id;
+    rc = nifmGetCurrentIpAddress(&id);
+    if(R_SUCCEEDED(rc))
+        return id;
+    return INADDR_LOOPBACK; 
 }
 
 int gethostname(char *name, size_t namelen) {
@@ -1594,3 +1600,18 @@ int gethostname(char *name, size_t namelen) {
     const char *hostname = inet_ntop(AF_INET, &in, name, namelen);
     return hostname == NULL ? -1 : 0;
 }
+
+// Unimplementable functions, left for compliance:
+struct hostent *gethostent(void) { h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct netent *getnetbyaddr(uint32_t a, int b) { (void)a; (void)b; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct netent *getnetbyname(const char *s) { (void)s; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct netent *getnetent(void) { h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct protoent *getprotobyname(const char *s) { (void)s; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct protoent *getprotobynumber(int a) { (void)a; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct protoent *getprotoent(void) { h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct servent *getservbyname(const char *s1, const char *s2) { (void)s1; (void)s2; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct servent *getservbyport(int a, const char *s) { (void)a; (void)s; h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+struct servent *getservent(void) { h_errno = NO_RECOVERY; errno = ENOSYS; return NULL; }
+void sethostent(int a) { (void)a;}
+void setnetent(int a) { (void)a;}
+void setprotoent(int a) { (void)a; }

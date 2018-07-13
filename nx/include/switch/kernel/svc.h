@@ -34,8 +34,8 @@ typedef enum {
     MemType_IpcBuffer1=0x11,          ///< IPC buffers with descriptor flags=1.
     MemType_IpcBuffer3=0x12,          ///< IPC buffers with descriptor flags=3.
     MemType_KernelStack=0x13,         ///< Mapped in kernel during \ref svcCreateThread.
-    MemType_JitReadOnly=0x14,         ///< Mapped in kernel during \ref svcMapJitMemory.
-    MemType_JitWritable=0x15,         ///< Mapped in kernel during \ref svcMapJitMemory.
+    MemType_CodeReadOnly=0x14,        ///< Mapped in kernel during \ref svcControlCodeMemory.
+    MemType_CodeWritable=0x15,        ///< Mapped in kernel during \ref svcControlCodeMemory.
 } MemoryType;
 
 /// Memory state bitmasks.
@@ -58,7 +58,7 @@ typedef enum {
     MemState_IsRefCounted=MemState_IsPoolAllocated, ///< Alias for \ref MemState_IsPoolAllocated.
     MemState_MapProcessAllowed=BIT(23),             ///< Map process allowed.
     MemState_AttrChangeAllowed=BIT(24),             ///< Attribute change allowed.
-    MemState_JitMemAllowed=BIT(25),                 ///< JIT memory allowed.
+    MemState_CodeMemAllowed=BIT(25),                ///< Code memory allowed.
 } MemoryState;
 
 /// Memory attribute bitmasks.
@@ -97,13 +97,48 @@ typedef struct {
     u64 X[8]; ///< Values of X0 through X7.
 } PACKED SecmonArgs;
 
-/// JIT mapping operations
+/// Code memory mapping operations
 typedef enum {
-    JitMapOperation_MapOwner=0,   ///< Map owner.
-    JitMapOperation_MapSlave=1,   ///< Map slave.
-    JitMapOperation_UnmapOwner=2, ///< Unmap owner.
-    JitMapOperation_UnmapSlave=3, ///< Unmap slave.
-} JitMapOperation;
+    CodeMapOperation_MapOwner=0,   ///< Map owner.
+    CodeMapOperation_MapSlave=1,   ///< Map slave.
+    CodeMapOperation_UnmapOwner=2, ///< Unmap owner.
+    CodeMapOperation_UnmapSlave=3, ///< Unmap slave.
+} CodeMapOperation;
+
+/// Limitable Resources.
+typedef enum {
+    LimitableResource_Memory=0,           ///<How much memory can a process map.
+    LimitableResource_Threads=1,          ///<How many threads can a process spawn.
+    LimitableResource_Events=2,           ///<How many events can a process have.
+    LimitableResource_TransferMemories=3, ///<How many transfer memories can a process make.
+    LimitableResource_Sessions=4,         ///<How many sessions can a process own.
+} LimitableResource;
+
+/// Process Information.
+typedef enum {
+    ProcessInfoType_ProcessState=0,       ///<What state is a process in.
+} ProcessInfoType;
+
+/// Process States.
+typedef enum {
+    ProcessState_Created=0,        ///<Newly-created process.
+    ProcessState_DebugAttached=1,  ///<Process attached to debugger.
+    ProcessState_DebugDetached=2,  ///<Process detached from debugger.
+    ProcessState_Crashed=3,        ///<Process that has just creashed.
+    ProcessState_Running=4,        ///<Process executing normally.
+    ProcessState_Exiting=5,        ///<Process has begun exiting.
+    ProcessState_Exited=6,         ///<Process has finished exiting.
+    ProcessState_DebugSuspended=7, ///<Process execution suspended by debugger.
+} ProcessState;
+
+/// Debug Thread Parameters.
+typedef enum {
+    DebugThreadParam_ActualPriority=0,
+    DebugThreadParam_State=1,
+    DebugThreadParam_IdealCore=2,
+    DebugThreadParam_CurrentCore=3,
+    DebugThreadParam_CoreMask=4,
+} DebugThreadParam;
 
 ///@name Memory management
 ///@{
@@ -474,6 +509,25 @@ Result svcGetInfo(u64* out, u64 id0, Handle handle, u64 id1);
 
 ///@}
 
+///@name Memory management
+///@{
+
+/**
+ * @brief Maps new heap memory at the desired address. [3.0.0+]
+ * @return Result code.
+ * @note Syscall number 0x2A.
+ */
+Result svcMapPhysicalMemory(void *address, u64 size);
+
+/**
+ * @brief Undoes the effects of \ref svcMapPhysicalMemory. [3.0.0+]
+ * @return Result code.
+ * @note Syscall number 0x2B.
+ */
+Result svcUnmapPhysicalMemory(void *address, u64 size);
+
+///@}
+
 ///@name Process and thread management
 ///@{
 
@@ -484,6 +538,25 @@ Result svcGetInfo(u64* out, u64 id0, Handle handle, u64 id1);
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcSetThreadActivity(Handle thread, bool paused);
+
+///@}
+
+///@name Resource Limit Management
+///@{
+
+/**
+ * @brief Gets the maximum value a LimitableResource can have, for a Resource Limit handle.
+ * @return Result code.
+ * @note Syscall number 0x30.
+ */
+Result svcGetResourceLimitLimitValue(u64 *out, Handle reslimit_h, LimitableResource which);
+
+/**
+ * @brief Gets the maximum value a LimitableResource can have, for a Resource Limit handle.
+ * @return Result code.
+ * @note Syscall number 0x31.
+ */
+Result svcGetResourceLimitCurrentValue(u64 *out, Handle reslimit_h, LimitableResource which);
 
 ///@}
 
@@ -532,28 +605,58 @@ Result svcReplyAndReceiveWithUserBuffer(s32* index, void* usrBuffer, u64 size, c
  * @return Result code.
  * @note Syscall number 0x45.
  */
-Result svcCreateEvent(Handle* client_handle, Handle* server_handle);
+Result svcCreateEvent(Handle* server_handle, Handle* client_handle);
 
 ///@}
 
-///@name Just-in-time (JIT) compilation support
+///@name Memory management
 ///@{
 
 /**
- * @brief Creates JIT memory in the caller's address space [4.0.0+].
+ * @brief Maps unsafe memory (usable for GPU DMA) for a system module at the desired address. [5.0.0+]
+ * @return Result code.
+ * @note Syscall number 0x48.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcMapPhysicalMemoryUnsafe(void *address, u64 size);
+
+/**
+ * @brief Undoes the effects of \ref svcMapPhysicalMemoryUnsafe. [5.0.0+]
+ * @return Result code.
+ * @note Syscall number 0x49.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcUnmapPhysicalMemoryUnsafe(void *address, u64 size);
+
+/**
+ * @brief Sets the system-wide limit for unsafe memory mappable using \ref svcMapPhysicalMemoryUnsafe. [5.0.0+]
+ * @return Result code.
+ * @note Syscall number 0x4A.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcSetUnsafeLimit(u64 size);
+
+///@}
+
+
+///@name Code memory / Just-in-time (JIT) compilation support
+///@{
+
+/**
+ * @brief Creates code memory in the caller's address space [4.0.0+].
  * @return Result code.
  * @note Syscall number 0x4B.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcCreateJitMemory(Handle* jit_handle, void* src_addr, u64 size);
+Result svcCreateCodeMemory(Handle* code_handle, void* src_addr, u64 size);
 
 /**
- * @brief Maps JIT memory in the caller's address space [4.0.0+].
+ * @brief Maps code memory in the caller's address space [4.0.0+].
  * @return Result code.
  * @note Syscall number 0x4C.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcMapJitMemory(Handle jit_handle, JitMapOperation op, void* dst_addr, u64 size, u64 perm);
+Result svcControlCodeMemory(Handle code_handle, CodeMapOperation op, void* dst_addr, u64 size, u64 perm);
 
 ///@}
 
@@ -708,7 +811,7 @@ Result svcBreakDebugProcess(Handle debug);
  * @note Syscall number 0x63.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcGetDebugEvent(u8* event_out, Handle* debug);
+Result svcGetDebugEvent(u8* event_out, Handle debug);
 
 /**
  * @brief Continues a debugging session.
@@ -716,7 +819,7 @@ Result svcGetDebugEvent(u8* event_out, Handle* debug);
  * @note Syscall number 0x64.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcContinueDebugEvent(Handle debug, u32 flags, u64 unk);
+Result svcContinueDebugEvent(Handle debug, u32 flags, u64 threadID);
 
 /**
  * @brief Gets the context of a thread in a debugging session.
@@ -738,6 +841,14 @@ Result svcGetDebugThreadContext(u8* out, Handle debug, u64 threadID, u32 flags);
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcGetProcessList(u32 *num_out, u64 *pids_out, u32 max_pids);
+
+/**
+ * @brief Retrieves a list of all threads for a debug handle (or zero).
+ * @return Result code.
+ * @note Syscall number 0x66.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcGetThreadList(u32 *num_out, u64 *tids_out, u32 max_tids, Handle debug);
 
 ///@}
 
@@ -767,6 +878,14 @@ Result svcReadDebugProcessMemory(void* buffer, Handle debug, u64 addr, u64 size)
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcWriteDebugProcessMemory(Handle debug, void* buffer, u64 addr, u64 size);
+
+/**
+ * @brief Gets parameters from a thread in a debugging session.
+ * @return Result code.
+ * @note Syscall number 0x6D.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcGetDebugThreadParam(u64* out_64, u32* out_32, Handle debug, u64 threadID, DebugThreadParam param);
 
 ///@}
 
@@ -911,6 +1030,35 @@ Result svcStartProcess(Handle proc, s32 main_prio, s32 default_cpu, u32 stack_si
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcTerminateProcess(Handle proc);
+
+/**
+ * @brief Gets a \ref ProcessInfoType for a process.
+ * @return Result code.
+ * @note Syscall number 0x7C.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcGetProcessInfo(u64 *out, Handle proc, ProcessInfoType which);
+
+///@}
+
+///@name Resource Limit Management
+///@{
+
+/**
+ * @brief Creates a new Resource Limit handle.
+ * @return Result code.
+ * @note Syscall number 0x7D.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcCreateResourceLimit(Handle* out);
+
+/**
+ * @brief Sets the value for a \ref LimitableResource for a Resource Limit handle.
+ * @return Result code.
+ * @note Syscall number 0x7E.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcSetResourceLimitLimitValue(Handle reslimit, LimitableResource which, u64 value);
 
 ///@}
 

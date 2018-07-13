@@ -14,6 +14,7 @@ void NORETURN __nx_exit(Result rc, LoaderReturnFn retaddr);
 void virtmemSetup(void);
 void newlibSetup(void);
 void argvSetup(void);
+void __libnx_init_time(void);
 
 extern u32 __nx_applet_type;
 
@@ -83,6 +84,8 @@ void __attribute__((weak)) __libnx_initheap(void)
     fake_heap_end   = (char*)addr + size;
 }
 
+void __attribute__((weak)) userAppInit(void);
+
 void __attribute__((weak)) __appInit(void)
 {
     Result rc;
@@ -106,15 +109,22 @@ void __attribute__((weak)) __appInit(void)
     if (R_FAILED(rc))
         fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_Time));
 
+    __libnx_init_time();
+
     rc = fsInitialize();
     if (R_FAILED(rc))
         fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
 
     fsdevMountSdmc();
+
+    if (&userAppInit) userAppInit();
 }
+
+void __attribute__((weak)) userAppExit(void);
 
 void __attribute__((weak)) __appExit(void)
 {
+    if (&userAppExit) userAppExit();
     // Cleanup default services.
     fsdevUnmountAll();
     fsExit();
