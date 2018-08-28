@@ -92,6 +92,209 @@ Result ncmOpenContentMetaDatabase(FsStorageId storage, NcmContentMetaDatabase* o
     return rc;
 }
 
+Result ncmContentStorageGeneratePlaceHolderId(NcmContentStorage* cs, NcmNcaId* outputId) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 0;
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+            NcmNcaId outputId;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+        if (R_SUCCEEDED(rc)) {
+            memcpy(outputId, &resp->outputId, sizeof(NcmNcaId));
+        }
+    }
+    
+    return rc;	
+}
+
+Result ncmContentStorageCreatePlaceHolder(NcmContentStorage* cs, const NcmNcaId* registeredId, const NcmNcaId* placeholderId, u64 size) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId registeredId;
+        NcmNcaId placeholderId;
+        u64 size;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 1;
+    memcpy(&raw->registeredId, registeredId, sizeof(NcmNcaId));
+    memcpy(&raw->placeholderId, placeholderId, sizeof(NcmNcaId));
+    raw->size = size;
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageDeletePlaceHolder(NcmContentStorage* cs, const NcmNcaId* placeholderId) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId placeholderId;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 2;
+    memcpy(&raw->placeholderId, placeholderId, sizeof(NcmNcaId));
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageWritePlaceHolder(NcmContentStorage* cs, const NcmNcaId* placeholderId, u64 offset, const void* srcData, size_t srcDataSize) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    ipcAddSendBuffer(&c, srcData, srcDataSize, BufferType_Normal);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId placeholderId;
+        u64 offset;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 4;
+    memcpy(&raw->placeholderId, placeholderId, sizeof(NcmNcaId));
+    raw->offset = offset;
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageRegister(NcmContentStorage* cs, const NcmNcaId* registeredId, const NcmNcaId* placeholderId) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId registeredId;
+        NcmNcaId placeholderId;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 5;
+    memcpy(&raw->registeredId, registeredId, sizeof(NcmNcaId));
+    memcpy(&raw->placeholderId, placeholderId, sizeof(NcmNcaId));
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageDelete(NcmContentStorage* cs, const NcmNcaId* registeredId) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId registeredId;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 6;
+    memcpy(&raw->registeredId, registeredId, sizeof(NcmNcaId));
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
 Result ncmContentStorageHas(NcmContentStorage* cs, const NcmNcaId* ncaId, bool* out) {
     IpcCommand c;
     ipcInitialize(&c);
@@ -168,6 +371,75 @@ Result ncmContentStorageGetPath(NcmContentStorage* cs, const NcmNcaId* ncaId, ch
     return rc;
 }
 
+Result ncmContentStorageGetPlaceHolderPath(NcmContentStorage* cs, const NcmNcaId* ncaId, char* out, size_t outSize) {
+    char out_path[FS_MAX_PATH-1] = {0};
+    IpcCommand c;
+    ipcInitialize(&c);
+    ipcAddRecvStatic(&c, out_path, FS_MAX_PATH-1, 0);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        NcmNcaId nca_id;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 9;
+    memcpy(&raw->nca_id, ncaId, sizeof(NcmNcaId));
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+
+        if (R_SUCCEEDED(rc)) {
+            if (outSize > FS_MAX_PATH-1) outSize = FS_MAX_PATH-1;
+            strncpy(out, out_path, outSize);
+        }
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageCleanupAllPlaceHolder(NcmContentStorage* cs) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 10;
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+    
+    return rc;
+}
+
 Result ncmContentStorageGetSize(NcmContentStorage* cs, const NcmNcaId* ncaId, u64* out) {
     IpcCommand c;
     ipcInitialize(&c);
@@ -200,6 +472,36 @@ Result ncmContentStorageGetSize(NcmContentStorage* cs, const NcmNcaId* ncaId, u6
         if (R_SUCCEEDED(rc)) {
             *out = resp->size;
         }
+    }
+    
+    return rc;
+}
+
+Result ncmContentStorageDisableForcibly(NcmContentStorage* cs) {
+    IpcCommand c;
+    ipcInitialize(&c);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 15;
+    
+    Result rc = serviceIpcDispatch(&cs->s);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
     }
     
     return rc;
@@ -279,10 +581,10 @@ Result ncmContentStorageGetRightsIdFromContentId(NcmContentStorage* cs, const Nc
     return rc;
 }
 
-Result ncmContentMetaDatabaseSet(NcmContentMetaDatabase* db, const NcmMetaRecord* record, u64 contentRecordSize, NcmContentRecord* contentRecords) {
+Result ncmContentMetaDatabaseSet(NcmContentMetaDatabase* db, const NcmMetaRecord* record, u64 inDataSize, const NcmContentMetaRecordsHeader* srcRecordsData) {
     IpcCommand c;
     ipcInitialize(&c);
-    ipcAddSendBuffer(&c, contentRecords, contentRecordSize, BufferType_Normal);
+    ipcAddSendBuffer(&c, srcRecordsData, inDataSize, BufferType_Normal);
 
     struct {
         u64 magic;
@@ -312,10 +614,10 @@ Result ncmContentMetaDatabaseSet(NcmContentMetaDatabase* db, const NcmMetaRecord
     return rc;
 }
 
-Result ncmContentMetaDatabaseGet(NcmContentMetaDatabase* db, const NcmMetaRecord* record, u64 contentRecordSize, NcmContentRecord* contentRecordsOut, u64* sizeRead) {
+Result ncmContentMetaDatabaseGet(NcmContentMetaDatabase* db, const NcmMetaRecord* record, u64 outDataSize, NcmContentMetaRecordsHeader* outRecordsData, u64* sizeRead) {
     IpcCommand c;
     ipcInitialize(&c);
-    ipcAddRecvBuffer(&c, contentRecordsOut, contentRecordSize, BufferType_Normal);
+    ipcAddRecvBuffer(&c, outRecordsData, outDataSize, BufferType_Normal);
 
     struct {
         u64 magic;
@@ -463,6 +765,54 @@ Result ncmContentMetaDatabaseListContentInfo(NcmContentMetaDatabase* db, const N
     return rc;
 }
 
+Result ncmContentMetaDatabaseList(NcmContentMetaDatabase* db, u32 titleType, u64 titleIdExact, u64 titleIdLow, u64 titleIdHigh, NcmMetaRecord* metaRecordsOut, size_t metaRecordsBufSize, u32* numEntriesWritten, u32* numEntriesTotal) {
+    IpcCommand c;
+    ipcInitialize(&c);    
+    ipcAddRecvBuffer(&c, metaRecordsOut, metaRecordsBufSize, BufferType_Normal);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u32 titleType;
+        u64 titleIdExact;
+        u64 titleIdLow;
+        u64 titleIdHigh;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 5;
+    raw->titleType = titleType;
+    raw->titleIdExact = titleIdExact;
+    raw->titleIdLow = titleIdLow;
+    raw->titleIdHigh = titleIdHigh;
+    
+    Result rc = serviceIpcDispatch(&db->s);
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+            u32 numEntriesTotal;
+            u32 numEntriesWritten;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+
+        if (R_SUCCEEDED(rc)) {
+            if (numEntriesTotal)
+                *numEntriesTotal = resp->numEntriesTotal;
+            if (numEntriesWritten)
+                *numEntriesWritten = resp->numEntriesWritten;
+        }
+    }
+    
+    return rc;
+}
+
 Result ncmContentMetaDatabaseGetLatestContentMetaKey(NcmContentMetaDatabase* db, u64 titleId, NcmMetaRecord* out) {
     IpcCommand c;
     ipcInitialize(&c);
@@ -525,15 +875,15 @@ Result ncmContentMetaDatabaseListApplication(NcmContentMetaDatabase* db, u8 filt
         struct {
             u64 magic;
             u64 result;
-            u32 entries_written;
             u32 total_entries;
+            u32 entries_written;
         } *resp = r.Raw;
 
         rc = resp->result;
 
         if (R_SUCCEEDED(rc)) {
-            if (numEntriesWritten) *numEntriesWritten = resp->entries_written;
             if (numEntriesTotal) *numEntriesTotal = resp->total_entries;
+            if (numEntriesWritten) *numEntriesWritten = resp->entries_written;
         }
     }
     
@@ -572,6 +922,36 @@ Result ncmContentMetaDatabaseHas(NcmContentMetaDatabase* db, const NcmMetaRecord
         if (R_SUCCEEDED(rc)) {
             if (out) *out = resp->out;
         }
+    }
+    
+    return rc;
+}
+
+Result ncmContentMetaDatabaseDisableForcibly(NcmContentMetaDatabase* db) {
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 13;
+    
+    Result rc = serviceIpcDispatch(&db->s);
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
     }
     
     return rc;

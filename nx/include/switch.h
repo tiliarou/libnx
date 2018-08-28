@@ -17,6 +17,8 @@ extern "C" {
 
 #include "switch/arm/tls.h"
 #include "switch/arm/cache.h"
+#include "switch/arm/atomics.h"
+#include "switch/arm/counter.h"
 
 #include "switch/kernel/svc.h"
 #include "switch/kernel/tmem.h"
@@ -43,6 +45,7 @@ extern "C" {
 #include "switch/services/audin.h"
 #include "switch/services/audout.h"
 #include "switch/services/csrng.h"
+#include "switch/services/bpc.h"
 //#include "switch/services/bsd.h" Use switch/runtime/devices/socket.h instead
 #include "switch/services/fatal.h"
 #include "switch/services/time.h"
@@ -59,6 +62,7 @@ extern "C" {
 #include "switch/services/set.h"
 #include "switch/services/lr.h"
 #include "switch/services/spl.h"
+#include "switch/services/ncm.h"
 
 #include "switch/gfx/gfx.h"
 #include "switch/gfx/binder.h"

@@ -21,6 +21,9 @@ static u64 g_refCnt;
 // From Get*Functions.
 static Service g_appletIFunctions;
 
+static Service g_appletIGlobalStateController;
+static Service g_appletIApplicationCreator;
+
 static Service g_appletILibraryAppletSelfAccessor;
 static Service g_appletIProcessWindingController;
 
@@ -125,7 +128,14 @@ Result appletInitialize(void)
     if (R_SUCCEEDED(rc) && __nx_applet_type != AppletType_LibraryApplet)
         rc = _appletGetSession(&g_appletProxySession, &g_appletIFunctions, 20);
 
-    // TODO: Add non-{Application/LibraryApplet} type-specific session init here.
+    if (R_SUCCEEDED(rc) && __nx_applet_type == AppletType_SystemApplet) {
+        //GetGlobalStateController
+        rc = _appletGetSession(&g_appletProxySession, &g_appletIGlobalStateController, 21);
+
+        //GetApplicationCreator
+        if (R_SUCCEEDED(rc))
+            rc = _appletGetSession(&g_appletProxySession, &g_appletIApplicationCreator, 22);
+    }
 
     if (R_SUCCEEDED(rc) && __nx_applet_type == AppletType_LibraryApplet) {
         //GetLibraryAppletSelfAccessor
@@ -169,6 +179,7 @@ Result appletInitialize(void)
     {
         do {
             svcWaitSynchronizationSingle(g_appletMessageEventHandle, U64_MAX);
+            //When applet was previously initialized in the context of the current process for AppletType_Application, there's exactly 1 issue with initializing again: this loop hangs since there's no message available. If a timeout is added to the above waitsync where the loop is exited on timeout when _appletGetCurrentFocusState output is 1, initialization works fine.
 
             u32 msg;
             rc = _appletReceiveMessage(&msg);
@@ -258,6 +269,11 @@ void appletExit(void)
         serviceClose(&g_appletISelfController);
         serviceClose(&g_appletICommonStateGetter);
         serviceClose(&g_appletILibraryAppletCreator);
+
+        if (__nx_applet_type == AppletType_SystemApplet) {
+            serviceClose(&g_appletIApplicationCreator);
+            serviceClose(&g_appletIGlobalStateController);
+        }
 
         if (__nx_applet_type != AppletType_LibraryApplet)
             serviceClose(&g_appletIFunctions);
