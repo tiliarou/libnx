@@ -82,6 +82,9 @@ Result appletInitialize(void)
     if (__nx_applet_type == AppletType_None)
         return 0;
 
+    if (R_FAILED(apmInitialize()))
+        return MAKERESULT(Module_Libnx, LibnxError_ApmFailedToInitialize);
+
     Result rc = 0;
 
     g_appletResourceUserId = 0;
@@ -224,9 +227,6 @@ Result appletInitialize(void)
     if (R_SUCCEEDED(rc))
         rc = _appletSetPerformanceModeChangedNotification(1);
 
-    if (R_SUCCEEDED(rc))
-        rc = apmInitialize();
-
     // Official apps aren't known to use apmSetPerformanceConfiguration with mode=1.
     if (R_SUCCEEDED(rc)) {
         // This is broken with the regular "apm" service.
@@ -251,8 +251,6 @@ void appletExit(void)
 {
     if (atomicDecrement64(&g_refCnt) == 0)
     {
-        apmExit();
-
         //TODO: Enable this somehow later with more condition(s)?
         /*if (__nx_applet_type == AppletType_LibraryApplet)
             _appletExitProcessAndReturn();*/
@@ -286,7 +284,13 @@ void appletExit(void)
         serviceClose(&g_appletProxySession);
         serviceClose(&g_appletSrv);
         g_appletResourceUserId = 0;
+
+        apmExit();
     }
+}
+
+AppletType appletGetAppletType(void) {
+    return __nx_applet_type;
 }
 
 static void appletCallHook(AppletHookType hookType)
@@ -530,7 +534,7 @@ Result appletGetDesiredLanguage(u64 *LanguageCode) {
     IpcCommand c;
     ipcInitialize(&c);
 
-    if (!serviceIsActive(&g_appletSrv) || __nx_applet_type!=AppletType_Application)
+    if (!serviceIsActive(&g_appletSrv) || __nx_applet_type != AppletType_Application)
         return MAKERESULT(Module_Libnx, LibnxError_NotInitialized);
 
     struct {
@@ -560,6 +564,78 @@ Result appletGetDesiredLanguage(u64 *LanguageCode) {
         if (R_SUCCEEDED(rc) && LanguageCode) {
             *LanguageCode = resp->LanguageCode;
         }
+    }
+
+    return rc;
+}
+
+Result appletBeginBlockingHomeButton(s64 val) {
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    if (!serviceIsActive(&g_appletSrv) || (__nx_applet_type!=AppletType_Application
+      && __nx_applet_type!=AppletType_SystemApplication))
+        return MAKERESULT(Module_Libnx, LibnxError_NotInitialized);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        s64 val;
+    } *raw;
+
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 32;
+    raw->val = val;
+
+    Result rc = serviceIpcDispatch(&g_appletIFunctions);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+
+    return rc;
+}
+
+Result appletEndBlockingHomeButton(void) {
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    if (!serviceIsActive(&g_appletSrv) || (__nx_applet_type!=AppletType_Application
+      && __nx_applet_type!=AppletType_SystemApplication))
+        return MAKERESULT(Module_Libnx, LibnxError_NotInitialized);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+    } *raw;
+
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 33;
+
+    Result rc = serviceIpcDispatch(&g_appletIFunctions);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
     }
 
     return rc;

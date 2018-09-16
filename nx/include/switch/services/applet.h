@@ -47,11 +47,21 @@ struct AppletHookCookie
 Result appletInitialize(void);
 void appletExit(void);
 Result appletGetAppletResourceUserId(u64 *out);
+AppletType appletGetAppletType(void);
 
 void appletNotifyRunning(u8 *out);
 Result appletCreateManagedDisplayLayer(u64 *out);
 
 Result appletGetDesiredLanguage(u64 *LanguageCode);
+
+/**
+ * @brief Blocks the usage of the home button.
+ * @param val Unknown nanoseconds. Value 0 can be used.
+ * @note Can only be used in regularapps.
+ */
+Result appletBeginBlockingHomeButton(s64 val);
+
+Result appletEndBlockingHomeButton(void);
 
 /**
  * @brief Controls whether screenshot-capture is allowed.

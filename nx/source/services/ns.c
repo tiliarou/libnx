@@ -43,7 +43,7 @@ void nsExit(void)
     }
 }
 
-Result nsdevInitialize() {
+Result nsdevInitialize(void) {
     atomicIncrement64(&g_nsdevRefCnt);
     
     if (serviceIsActive(&g_nsdevSrv))
@@ -52,7 +52,7 @@ Result nsdevInitialize() {
     return smGetService(&g_nsdevSrv, "ns:dev");
 }
 
-void nsdevExit() {
+void nsdevExit(void) {
     if (atomicDecrement64(&g_nsdevRefCnt) == 0)
         serviceClose(&g_nsdevSrv);
 }
@@ -87,6 +87,84 @@ static Result _nsGetInterface(Service* srv_out, u64 cmd_id) {
         if (R_SUCCEEDED(rc)) {
             serviceCreate(srv_out, r.Handles[0]);
         }
+    }
+
+    return rc;
+}
+
+Result nsListApplicationRecord(NsApplicationRecord* buffer, size_t size, size_t entry_offset, size_t* out_entrycount)
+{
+    IpcCommand c;
+    ipcInitialize(&c);
+    ipcAddRecvBuffer(&c, buffer, size, 0);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u32 entry_offset;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 0;
+    raw->entry_offset = entry_offset;
+    
+    Result rc = serviceIpcDispatch(&g_nsAppManSrv);
+    
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+            u32 entry_count;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+        
+        if (R_SUCCEEDED(rc) && out_entrycount) *out_entrycount = resp->entry_count;
+    }
+
+    return rc;
+}
+
+Result nsListApplicationContentMetaStatus(u64 titleID, u32 index, NsApplicationContentMetaStatus* buffer, size_t size, size_t* out_entrycount)
+{
+    IpcCommand c;
+    ipcInitialize(&c);
+    ipcAddRecvBuffer(&c, buffer, size, 0);
+    
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u32 index;
+        u64 titleID;
+    } *raw;
+    
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+    
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 601;
+    raw->index = index;
+    raw->titleID = titleID;
+    
+    Result rc = serviceIpcDispatch(&g_nsAppManSrv);
+    
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+            u32 entry_count;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+
+        if (R_SUCCEEDED(rc) && out_entrycount) *out_entrycount = resp->entry_count;
     }
 
     return rc;
