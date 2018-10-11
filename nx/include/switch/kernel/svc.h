@@ -5,6 +5,7 @@
  */
 #pragma once
 #include "../types.h"
+#include "../arm/thread_context.h"
 
 /// Pseudo handle for the current process.
 #define CUR_PROCESS_HANDLE 0xFFFF8001
@@ -121,14 +122,14 @@ typedef enum {
 
 /// Process States.
 typedef enum {
-    ProcessState_Created=0,        ///<Newly-created process.
-    ProcessState_DebugAttached=1,  ///<Process attached to debugger.
-    ProcessState_DebugDetached=2,  ///<Process detached from debugger.
-    ProcessState_Crashed=3,        ///<Process that has just creashed.
-    ProcessState_Running=4,        ///<Process executing normally.
-    ProcessState_Exiting=5,        ///<Process has begun exiting.
-    ProcessState_Exited=6,         ///<Process has finished exiting.
-    ProcessState_DebugSuspended=7, ///<Process execution suspended by debugger.
+    ProcessState_Created=0,             ///<Newly-created process, not yet started.
+    ProcessState_CreatedAttached=1,     ///<Newly-created process, not yet started but attached to debugger.
+    ProcessState_Running=2,             ///<Process that is running normally (and detached from any debugger).
+    ProcessState_Crashed=3,             ///<Process that has just crashed.
+    ProcessState_RunningAttached=4,     ///<Process that is running normally, attached to a debugger.
+    ProcessState_Exiting=5,             ///<Process has begun exiting.
+    ProcessState_Exited=6,              ///<Process has finished exiting.
+    ProcessState_DebugSuspended=7,      ///<Process execution suspended by debugger.
 } ProcessState;
 
 /// Debug Thread Parameters.
@@ -575,6 +576,16 @@ Result svcGetResourceLimitCurrentValue(u64 *out, Handle reslimit_h, LimitableRes
  */
 Result svcSetThreadActivity(Handle thread, bool paused);
 
+/**
+ * @brief Dumps the registers of a thread paused by @ref svcSetThreadActivity (register groups: all).
+ * @param[out] ctx Output thread context (register dump).
+ * @param[in] thread Thread handle.
+ * @return Result code.
+ * @note Syscall number 0x33.
+ * @warning Official kernel will not dump x0..x18 if the thread is currently executing a system call, and prior to 6.0.0 doesn't dump TPIDR_EL0.
+ */
+Result svcGetThreadContext3(ThreadContext* ctx, Handle thread);
+
 ///@}
 
 ///@name Inter-process communication (IPC)
@@ -850,12 +861,30 @@ Result svcContinueDebugEvent(Handle debug, u32 flags, u64* tid_list, u32 num_tid
 Result svcLegacyContinueDebugEvent(Handle debug, u32 flags, u64 threadID);
 
 /**
- * @brief Gets the context of a thread in a debugging session.
+ * @brief Gets the context (dump the registers) of a thread in a debugging session.
  * @return Result code.
+ * @param[out] ctx Output thread context (register dump).
+ * @param[in] debug Debug handle.
+ * @param[in] threadId ID of the thread to dump the context of.
+ * @param[in] flags Register groups to select, combination of @ref RegisterGroup flags.
  * @note Syscall number 0x67.
+ * @warning Official kernel will not dump any CPU GPR if the thread is currently executing a system call (except @ref svcBreak and @ref svcReturnFromException).
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcGetDebugThreadContext(u8* out, Handle debug, u64 threadID, u32 flags);
+Result svcGetDebugThreadContext(ThreadContext* ctx, Handle debug, u64 threadID, u32 flags);
+
+/**
+ * @brief Gets the context (dump the registers) of a thread in a debugging session.
+ * @return Result code.
+ * @param[in] debug Debug handle.
+ * @param[in] threadId ID of the thread to set the context of.
+ * @param[in] ctx Input thread context (register dump).
+ * @param[in] flags Register groups to select, combination of @ref RegisterGroup flags.
+ * @note Syscall number 0x68.
+ * @warning Official kernel will return an error if the thread is currently executing a system call (except @ref svcBreak and @ref svcReturnFromException).
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcSetDebugThreadContext(Handle debug, u64 threadID, const ThreadContext* ctx, u32 flags);
 
 ///@}
 
@@ -937,7 +966,7 @@ Result svcGetSystemInfo(u64* out, u64 id0, Handle handle, u64 id1);
 
 ///@name Inter-process communication (IPC)
 ///@{
-    
+
 /**
  * @brief Creates a port.
  * @return Result code.

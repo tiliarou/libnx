@@ -274,6 +274,11 @@ SVC_BEGIN svcSetThreadActivity
 	ret
 SVC_END
 
+SVC_BEGIN svcGetThreadContext3
+	svc 0x33
+	ret
+SVC_END
+
 SVC_BEGIN svcCreateSession
 	stp x0, x1, [sp, #-16]!
 	svc 0x40
@@ -370,7 +375,7 @@ SVC_BEGIN svcUnmapTransferMemory
 	ret
 SVC_END
 
-SVC_BEGIN svcCreateInterruptEvent 
+SVC_BEGIN svcCreateInterruptEvent
 	str x0, [sp, #-16]!
 	svc 0x53
 	ldr x2, [sp], #16
@@ -474,6 +479,11 @@ SVC_END
 
 SVC_BEGIN svcGetDebugThreadContext
 	svc 0x67
+	ret
+SVC_END
+
+SVC_BEGIN svcSetDebugThreadContext
+	svc 0x68
 	ret
 SVC_END
 

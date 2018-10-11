@@ -35,6 +35,10 @@ enum {
     EntryType_LastLoadResult=11       ///< Provides the last load result.
 };
 
+enum {
+    EnvAppletFlags_ApplicationOverride = BIT(0) ///< Use AppletType_Application instead of AppletType_SystemApplication.
+};
+
 /// Loader return function.
 typedef void NORETURN (*LoaderReturnFn)(int result_code);
 
@@ -75,6 +79,9 @@ Handle envGetOwnProcessHandle(void);
 
 /// Returns the loader's return function, to be called on program exit.
 LoaderReturnFn envGetExitFuncPtr(void);
+
+/// Sets the return function to be called on program exit.
+void envSetExitFuncPtr(LoaderReturnFn addr);
 
 /**
  * @brief Configures the next homebrew application to load.
