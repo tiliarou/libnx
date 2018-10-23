@@ -37,10 +37,24 @@ static RwLock g_hidLock;
 static Result _hidCreateAppletResource(Service* srv, Service* srv_out, u64 AppletResourceUserId);
 static Result _hidGetSharedMemoryHandle(Service* srv, Handle* handle_out);
 
+static Result _hidActivateNpad(void);
+static Result _hidDeactivateNpad(void);
+
 static Result _hidSetDualModeAll(void);
 
 Result hidInitialize(void)
 {
+    HidControllerID idbuf[9] = {
+        CONTROLLER_PLAYER_1,
+        CONTROLLER_PLAYER_2,
+        CONTROLLER_PLAYER_3,
+        CONTROLLER_PLAYER_4,
+        CONTROLLER_PLAYER_5,
+        CONTROLLER_PLAYER_6,
+        CONTROLLER_PLAYER_7,
+        CONTROLLER_PLAYER_8,
+        CONTROLLER_HANDHELD};
+
     atomicIncrement64(&g_refCnt);
 
     if (serviceIsActive(&g_hidSrv))
@@ -75,7 +89,13 @@ Result hidInitialize(void)
     }
 
     if (R_SUCCEEDED(rc))
+        rc = _hidActivateNpad();
+
+    if (R_SUCCEEDED(rc))
         rc = hidSetSupportedNpadStyleSet(TYPE_PROCONTROLLER | TYPE_HANDHELD | TYPE_JOYCON_PAIR | TYPE_JOYCON_LEFT | TYPE_JOYCON_RIGHT);
+
+    if (R_SUCCEEDED(rc))
+        rc = hidSetSupportedNpadIdType(idbuf, 9);
 
     if (R_SUCCEEDED(rc))
         rc = _hidSetDualModeAll();
@@ -92,6 +112,8 @@ void hidExit(void)
     if (atomicDecrement64(&g_refCnt) == 0)
     {
         _hidSetDualModeAll();
+
+        _hidDeactivateNpad();
 
         serviceClose(&g_hidIAppletResource);
         serviceClose(&g_hidSrv);
@@ -278,6 +300,49 @@ HidControllerType hidGetControllerType(HidControllerID id) {
     rwlockReadUnlock(&g_hidLock);
 
     return tmp;
+}
+
+void hidGetControllerColors(HidControllerID id, HidControllerColors *colors) {
+    if (id==CONTROLLER_P1_AUTO) {
+        hidGetControllerColors(g_controllerP1AutoID, colors);
+        return;
+    }
+    if (id < 0 || id > 9) return;
+    if (colors == NULL) return;
+
+    HidControllerHeader *hdr = &g_controllerHeaders[id];
+
+    memset(colors, 0, sizeof(HidControllerColors));
+
+    rwlockReadLock(&g_hidLock);
+
+    colors->singleSet = (hdr->singleColorsDescriptor & BIT(1)) == 0;
+    colors->splitSet = (hdr->splitColorsDescriptor & BIT(1)) == 0;
+
+    if (colors->singleSet) {
+        colors->singleColorBody = hdr->singleColorBody;
+        colors->singleColorButtons = hdr->singleColorButtons;
+    }
+
+    if (colors->splitSet) {
+        colors->leftColorBody = hdr->leftColorBody;
+        colors->leftColorButtons = hdr->leftColorButtons;
+        colors->rightColorBody = hdr->rightColorBody;
+        colors->rightColorButtons = hdr->rightColorButtons;
+    }
+
+    rwlockReadUnlock(&g_hidLock);
+}
+
+bool hidIsControllerConnected(HidControllerID id) {
+    if (id==CONTROLLER_P1_AUTO)
+        return hidIsControllerConnected(g_controllerP1AutoID);
+    if (id < 0 || id > 9) return 0;
+
+    rwlockReadLock(&g_hidLock);
+    bool flag = (g_controllerEntries[id].connectionState & CONTROLLER_STATE_CONNECTED) != 0;
+    rwlockReadUnlock(&g_hidLock);
+    return flag;
 }
 
 u64 hidKeysHeld(HidControllerID id) {
@@ -556,6 +621,69 @@ static Result _hidGetSharedMemoryHandle(Service* srv, Handle* handle_out) {
     return rc;
 }
 
+Result hidSetSupportedNpadIdType(HidControllerID *buf, size_t count) {
+    Result rc;
+    u64 AppletResourceUserId;
+    size_t i;
+    u32 tmpval=0;
+    u32 tmpbuf[10];
+
+    rc = appletGetAppletResourceUserId(&AppletResourceUserId);
+    if (R_FAILED(rc))
+        AppletResourceUserId = 0;
+
+    if (count > 10)
+        return MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+
+    memset(tmpbuf, 0, sizeof(tmpbuf));
+    for (i=0; i<count; i++) {
+        tmpval = buf[i];
+        if (tmpval == CONTROLLER_HANDHELD) {
+            tmpval = 0x20;
+        }
+        else if (tmpval >= CONTROLLER_UNKNOWN) {
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        }
+
+        tmpbuf[i] = tmpval;
+    }
+
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u64 AppletResourceUserId;
+    } *raw;
+
+    ipcSendPid(&c);
+
+    ipcAddSendStatic(&c, tmpbuf, sizeof(u32)*count, 0);
+
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = 102;
+    raw->AppletResourceUserId = AppletResourceUserId;
+
+    rc = serviceIpcDispatch(&g_hidSrv);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+
+    return rc;
+}
+
 static Result _hidCmdWithInputU32(u64 cmd_id, u32 inputval) {
     Result rc;
     u64 AppletResourceUserId;
@@ -600,8 +728,106 @@ static Result _hidCmdWithInputU32(u64 cmd_id, u32 inputval) {
     return rc;
 }
 
+static Result _hidCmdWithInputU64(u64 cmd_id, u64 inputval) {
+    Result rc;
+    u64 AppletResourceUserId;
+
+    rc = appletGetAppletResourceUserId(&AppletResourceUserId);
+    if (R_FAILED(rc))
+        AppletResourceUserId = 0;
+
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u64 AppletResourceUserId;
+        u64 val;
+    } *raw;
+
+    ipcSendPid(&c);
+
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = cmd_id;
+    raw->val = inputval;
+    raw->AppletResourceUserId = AppletResourceUserId;
+
+    rc = serviceIpcDispatch(&g_hidSrv);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+
+    return rc;
+}
+
+static Result _hidCmdWithNoInput(u64 cmd_id) {
+    Result rc;
+    u64 AppletResourceUserId;
+
+    rc = appletGetAppletResourceUserId(&AppletResourceUserId);
+    if (R_FAILED(rc))
+        AppletResourceUserId = 0;
+
+    IpcCommand c;
+    ipcInitialize(&c);
+
+    struct {
+        u64 magic;
+        u64 cmd_id;
+        u64 AppletResourceUserId;
+    } *raw;
+
+    ipcSendPid(&c);
+
+    raw = ipcPrepareHeader(&c, sizeof(*raw));
+
+    raw->magic = SFCI_MAGIC;
+    raw->cmd_id = cmd_id;
+    raw->AppletResourceUserId = AppletResourceUserId;
+
+    rc = serviceIpcDispatch(&g_hidSrv);
+
+    if (R_SUCCEEDED(rc)) {
+        IpcParsedCommand r;
+        ipcParse(&r);
+
+        struct {
+            u64 magic;
+            u64 result;
+        } *resp = r.Raw;
+
+        rc = resp->result;
+    }
+
+    return rc;
+}
+
 Result hidSetSupportedNpadStyleSet(HidControllerType type) {
     return _hidCmdWithInputU32(100, type);
+}
+
+static Result _hidActivateNpad(void) {
+    return _hidCmdWithNoInput(103);
+}
+
+static Result _hidDeactivateNpad(void) {
+    return _hidCmdWithNoInput(104);
+}
+
+Result hidSetNpadJoyHoldType(u64 type) {
+    return _hidCmdWithInputU64(120, type);
 }
 
 Result hidSetNpadJoyAssignmentModeSingleByDefault(HidControllerID id) {
