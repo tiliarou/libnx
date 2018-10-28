@@ -64,7 +64,7 @@ Result appletIsGamePlayRecordingSupported(bool *flag);
 Result appletSetGamePlayRecordingState(bool state);
 
 /// Initializes video recording. This allocates a 0x6000000-byte buffer for the TransferMemory, cleanup is handled automatically during app exit in \ref appletExit.
-/// Only available with AppletType_*Application on 3.0.0+, hence errors from this can be ignored.
+/// Only available with AppletType_Application on 3.0.0+, hence errors from this can be ignored.
 /// Video recording is only fully available system-side with 4.0.0+.
 /// Only usable when running under a title which supports video recording.
 Result appletInitializeGamePlayRecording(void);
@@ -79,8 +79,9 @@ Result appletBeginBlockingHomeButton(s64 val);
 Result appletEndBlockingHomeButton(void);
 
 /**
- * @brief Delay exiting until \ref appletUnlockExit is called.
+ * @brief Delay exiting until \ref appletUnlockExit is called, with a 15 second timeout once exit is requested.
  * @note When exit is requested \ref appletMainLoop will return false, hence any main-loop using appletMainLoop will exit. This allows the app to handle cleanup post-main-loop instead of being force-terminated.
+ * @note If the above timeout occurs after exit was requested where \ref appletUnlockExit was not called, the process will be forced-terminated.
  * @note \ref appletUnlockExit must be used before main() returns.
  */
 Result appletLockExit(void);
