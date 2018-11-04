@@ -47,6 +47,7 @@ extern "C" {
 #include "switch/services/audin.h"
 #include "switch/services/audout.h"
 #include "switch/services/audren.h"
+#include "switch/services/auddev.h"
 #include "switch/services/csrng.h"
 #include "switch/services/bpc.h"
 #include "switch/services/psm.h"
@@ -67,6 +68,7 @@ extern "C" {
 #include "switch/services/lr.h"
 #include "switch/services/spl.h"
 #include "switch/services/ncm.h"
+#include "switch/services/psc.h"
 
 #include "switch/display/gfx.h"
 #include "switch/display/binder.h"
