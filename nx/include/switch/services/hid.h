@@ -225,13 +225,13 @@ typedef enum
 
 typedef enum
 {
-    LAYOUT_PROCONTROLLER   = 0, // Pro Controller or Hid gamepad
-    LAYOUT_HANDHELD        = 1, // Two Joy-Con docked to rails
-    LAYOUT_SINGLE          = 2, // Horizontal single Joy-Con or pair of Joy-Con, adjusted for orientation
-    LAYOUT_LEFT            = 3, // Only raw left Joy-Con state, no orientation adjustment
-    LAYOUT_RIGHT           = 4, // Only raw right Joy-Con state, no orientation adjustment
-    LAYOUT_DEFAULT_DIGITAL = 5, // Same as next, but sticks have 8-direction values only
-    LAYOUT_DEFAULT         = 6, // Safe default, single Joy-Con have buttons/sticks rotated for orientation
+    LAYOUT_PROCONTROLLER   = 0, ///< Pro Controller or Hid gamepad.
+    LAYOUT_HANDHELD        = 1, ///< Two Joy-Con docked to rails.
+    LAYOUT_SINGLE          = 2, ///< Single Joy-Con or pair of Joy-Con, only available in dual-mode with no orientation adjustment.
+    LAYOUT_LEFT            = 3, ///< Only single-mode raw left Joy-Con state, no orientation adjustment.
+    LAYOUT_RIGHT           = 4, ///< Only single-mode raw right Joy-Con state, no orientation adjustment.
+    LAYOUT_DEFAULT_DIGITAL = 5, ///< Same as next, but sticks have 8-direction values only.
+    LAYOUT_DEFAULT         = 6, ///< Safe default. Single-mode and \ref HidJoyHoldType_Horizontal: Joy-Con have buttons/sticks rotated for orientation, where physical Z(L/R) are unavailable and S(L/R) are mapped to L/R (with physical L/R unavailable).
 } HidControllerLayoutType;
 
 typedef enum
@@ -265,11 +265,13 @@ typedef enum
     KEY_RSTICK_UP    = BIT(21),      ///< Right Stick Up
     KEY_RSTICK_RIGHT = BIT(22),      ///< Right Stick Right
     KEY_RSTICK_DOWN  = BIT(23),      ///< Right Stick Down
-    KEY_SL           = BIT(24),      ///< SL
-    KEY_SR           = BIT(25),      ///< SR
+    KEY_SL_LEFT      = BIT(24),      ///< SL on Left Joy-Con
+    KEY_SR_LEFT      = BIT(25),      ///< SR on Left Joy-Con
+    KEY_SL_RIGHT     = BIT(26),      ///< SL on Right Joy-Con
+    KEY_SR_RIGHT     = BIT(27),      ///< SR on Right Joy-Con
 
     // Pseudo-key for at least one finger on the touch screen
-    KEY_TOUCH       = BIT(26),
+    KEY_TOUCH       = BIT(28),
 
     // Buttons by orientation (for single Joy-Con), also works with Joy-Con pairs, Pro Controller
     KEY_JOYCON_RIGHT = BIT(0),
@@ -278,10 +280,12 @@ typedef enum
     KEY_JOYCON_LEFT  = BIT(3),
 
     // Generic catch-all directions, also works for single Joy-Con
-    KEY_UP    = KEY_DUP    | KEY_LSTICK_UP    | KEY_RSTICK_UP,    ///< D-Pad Up or Sticks Up
-    KEY_DOWN  = KEY_DDOWN  | KEY_LSTICK_DOWN  | KEY_RSTICK_DOWN,  ///< D-Pad Down or Sticks Down
-    KEY_LEFT  = KEY_DLEFT  | KEY_LSTICK_LEFT  | KEY_RSTICK_LEFT,  ///< D-Pad Left or Sticks Left
-    KEY_RIGHT = KEY_DRIGHT | KEY_LSTICK_RIGHT | KEY_RSTICK_RIGHT, ///< D-Pad Right or Sticks Right
+    KEY_UP    = KEY_DUP     | KEY_LSTICK_UP    | KEY_RSTICK_UP,    ///< D-Pad Up or Sticks Up
+    KEY_DOWN  = KEY_DDOWN   | KEY_LSTICK_DOWN  | KEY_RSTICK_DOWN,  ///< D-Pad Down or Sticks Down
+    KEY_LEFT  = KEY_DLEFT   | KEY_LSTICK_LEFT  | KEY_RSTICK_LEFT,  ///< D-Pad Left or Sticks Left
+    KEY_RIGHT = KEY_DRIGHT  | KEY_LSTICK_RIGHT | KEY_RSTICK_RIGHT, ///< D-Pad Right or Sticks Right
+    KEY_SL    = KEY_SL_LEFT | KEY_SL_RIGHT,                        ///< SL on Left or Right Joy-Con
+    KEY_SR    = KEY_SR_LEFT | KEY_SR_RIGHT,                        ///< SR on Left or Right Joy-Con
 } HidControllerKeys;
 
 typedef enum
@@ -312,6 +316,12 @@ typedef enum
     CONTROLLER_UNKNOWN  = 9,
     CONTROLLER_P1_AUTO = 10, ///< Not an actual HID-sysmodule ID. Only for hidKeys*()/hidJoystickRead()/hidSixAxisSensorValuesRead()/hidGetControllerType()/hidGetControllerColors()/hidIsControllerConnected(). Automatically uses CONTROLLER_PLAYER_1 when connected, otherwise uses CONTROLLER_HANDHELD.
 } HidControllerID;
+
+typedef enum
+{
+    HidJoyHoldType_Default    = 0, ///< Default / Joy-Con held vertically.
+    HidJoyHoldType_Horizontal = 1, ///< Joy-Con held horizontally with HID state orientation adjustment, see \ref HidControllerLayoutType.
+} HidJoyHoldType;
 
 typedef struct touchPosition
 {
@@ -661,7 +671,8 @@ Result hidSetSupportedNpadIdType(HidControllerID *buf, size_t count);
 /// Sets which controller types are supported. This is automatically called with all types in \ref hidInitialize.
 Result hidSetSupportedNpadStyleSet(HidControllerType type);
 
-Result hidSetNpadJoyHoldType(u64 type);
+/// Sets the hold-type, see \ref HidJoyHoldType.
+Result hidSetNpadJoyHoldType(HidJoyHoldType type);
 
 /// Use this if you want to use a single joy-con as a dedicated CONTROLLER_PLAYER_*.
 /// When used, both joy-cons in a pair should be used with this (CONTROLLER_PLAYER_1 and CONTROLLER_PLAYER_2 for example).
