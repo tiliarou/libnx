@@ -249,12 +249,12 @@ SVC_BEGIN svcGetInfo
 SVC_END
 
 SVC_BEGIN svcMapPhysicalMemory
-	svc 0x2A
+	svc 0x2C
 	ret
 SVC_END
 
 SVC_BEGIN svcUnmapPhysicalMemory
-	svc 0x2B
+	svc 0x2D
 	ret
 SVC_END
 
@@ -448,6 +448,11 @@ SVC_END
 
 SVC_BEGIN svcBreakDebugProcess
 	svc 0x61
+	ret
+SVC_END
+
+SVC_BEGIN svcTerminateDebugProcess
+	svc 0x62
 	ret
 SVC_END
 

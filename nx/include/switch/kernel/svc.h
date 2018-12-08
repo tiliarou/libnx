@@ -537,7 +537,7 @@ Result svcGetInfo(u64* out, u64 id0, Handle handle, u64 id1);
 /**
  * @brief Maps new heap memory at the desired address. [3.0.0+]
  * @return Result code.
- * @note Syscall number 0x2A.
+ * @note Syscall number 0x2C.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcMapPhysicalMemory(void *address, u64 size);
@@ -545,7 +545,7 @@ Result svcMapPhysicalMemory(void *address, u64 size);
 /**
  * @brief Undoes the effects of \ref svcMapPhysicalMemory. [3.0.0+]
  * @return Result code.
- * @note Syscall number 0x2B.
+ * @note Syscall number 0x2D.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcUnmapPhysicalMemory(void *address, u64 size);
@@ -840,6 +840,14 @@ Result svcDebugActiveProcess(Handle* debug, u64 processID);
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
 Result svcBreakDebugProcess(Handle debug);
+
+/**
+ * @brief Terminates the process of an active debugging session.
+ * @return Result code.
+ * @note Syscall number 0x62.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcTerminateDebugProcess(Handle debug);
 
 /**
  * @brief Gets an incoming debug event from a debugging session.
