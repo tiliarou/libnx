@@ -1,6 +1,7 @@
 /**
  * @file applet.h
  * @brief Applet (applet) service IPC wrapper.
+ * @note For wrappers which launch LibraryApplets etc, see switch/applets/.
  * @author yellows8
  * @copyright libnx Authors
  */
@@ -8,6 +9,7 @@
 #include "../types.h"
 #include "../services/sm.h"
 #include "../kernel/tmem.h"
+#include "../kernel/event.h"
 
 typedef enum {
     AppletType_None = -2,
@@ -35,18 +37,18 @@ typedef enum {
 } AppletHookType;
 
 typedef enum {
-    AppletFocusState_Focused = 1,               ///< Applet is focused.
-    AppletFocusState_NotFocusedUnknown = 2,     ///< Out of focus - unknown reason (LibraryApplet open?).
-    AppletFocusState_NotFocusedHomeSleep = 3    ///< Out of focus - HOME menu is open / console is sleeping.
+    AppletFocusState_Focused = 1,                   ///< Applet is focused.
+    AppletFocusState_NotFocusedLibraryApplet = 2,   ///< Out of focus - LibraryApplet open.
+    AppletFocusState_NotFocusedHomeSleep = 3        ///< Out of focus - HOME menu open / console is sleeping.
 } AppletFocusState;
 
 typedef enum {
-  AppletFocusHandlingMode_Suspend1 = 0, ///< Suspend when out of focus.
-  AppletFocusHandlingMode_NoSuspend,    ///< Don't suspend when out of focus.
-  AppletFocusHandlingMode_Suspend2,     ///< Suspend when out of focus (unknown variant 1).
-  AppletFocusHandlingMode_Suspend3,     ///< Suspend when out of focus (unknown variant 2).
+  AppletFocusHandlingMode_SuspendHomeSleep = 0,       ///< Suspend only when HOME menu is open / console is sleeping (default).
+  AppletFocusHandlingMode_NoSuspend,                  ///< Don't suspend when out of focus.
+  AppletFocusHandlingMode_SuspendHomeSleepNotify,     ///< Suspend only when HOME menu is open / console is sleeping but still receive OnFocusState hook.
+  AppletFocusHandlingMode_AlwaysSuspend,              ///< Always suspend when out of focus, regardless of the reason.
 
-  AppletFocusHandlingMode_Max,          //< Number of focus handling modes
+  AppletFocusHandlingMode_Max,                        ///< Number of focus handling modes.
 } AppletFocusHandlingMode;
 
 typedef enum {
@@ -54,6 +56,52 @@ typedef enum {
     AppletLaunchParameterKind_PreselectedUser = 2, ///< account PreselectedUser
     AppletLaunchParameterKind_Unknown         = 3, ///< Unknown if used by anything?
 } AppletLaunchParameterKind;
+
+typedef enum {
+    AppletId_overlayDisp = 0x02,    ///< 010000000000100C "overlayDisp"
+    AppletId_qlaunch = 0x03,        ///< 0100000000001000 "qlaunch" (SystemAppletMenu)
+    AppletId_starter = 0x04,        ///< 0100000000001012 "starter"
+    AppletId_auth = 0x0A,           ///< 0100000000001001 "auth"
+    AppletId_cabinet = 0x0B,        ///< 0100000000001002 "cabinet"
+    AppletId_controller = 0x0C,     ///< 0100000000001003 "controller"
+    AppletId_dataErase = 0x0D,      ///< 0100000000001004 "dataErase"
+    AppletId_error = 0x0E,          ///< 0100000000001005 "error"
+    AppletId_netConnect = 0x0F,     ///< 0100000000001006 "netConnect"
+    AppletId_playerSelect = 0x10,   ///< 0100000000001007 "playerSelect"
+    AppletId_swkbd = 0x11,          ///< 0100000000001008 "swkbd"
+    AppletId_miiEdit = 0x12,        ///< 0100000000001009 "miiEdit"
+    AppletId_web = 0x13,            ///< 010000000000100A "LibAppletWeb" WebApplet applet
+    AppletId_shop = 0x14,           ///< 010000000000100B "LibAppletShop" ShopN applet
+    AppletId_photoViewer = 0x15,    ///< 010000000000100D "photoViewer"
+    AppletId_set = 0x16,            ///< 010000000000100E "set" (This title is currently not present on retail devices.)
+    AppletId_offlineWeb = 0x17,     ///< 010000000000100F "LibAppletOff" Offline web-applet
+    AppletId_loginShare = 0x18,     ///< 0100000000001010 "LibAppletLns" Whitelisted web-applet
+    AppletId_wifiWebAuth = 0x19,    ///< 0100000000001011 "LibAppletAuth" WifiWebAuth applet
+    AppletId_myPage = 0x1A,         ///< 0100000000001013 "myPage"
+} AppletId;
+
+/// LibraryAppletMode
+typedef enum {
+    LibAppletMode_AllForeground = 0,
+    LibAppletMode_Background = 1,
+    LibAppletMode_Unknown2 = 2,
+    LibAppletMode_Unknown3 = 3,
+} LibAppletMode;
+
+/// LibraryAppletExitReason
+typedef enum {
+    LibAppletExitReason_Normal = 0,
+    LibAppletExitReason_Canceled = 1,
+    LibAppletExitReason_Abnormal = 2,
+    LibAppletExitReason_Unexpected = 10,
+} LibAppletExitReason;
+
+typedef enum {
+    AppletThemeColorType_Default = 0,
+    AppletThemeColorType_Unknown1 = 1,
+    AppletThemeColorType_Unknown2 = 2,
+    AppletThemeColorType_Unknown3 = 3,
+} AppletThemeColorType;
 
 /// applet hook function.
 typedef void (*AppletHookFn)(AppletHookType hook, void* param);
@@ -74,6 +122,17 @@ typedef struct {
     TransferMemory tmem;
 } AppletStorage;
 
+/// LibraryApplet state.
+typedef struct {
+    Service s;                         ///< ILibraryAppletAccessor
+    Event StateChangedEvent;           ///< Output from GetAppletStateChangedEvent, autoclear=false.
+    Event PopInteractiveOutDataEvent;  ///< Output from GetPopInteractiveOutDataEvent, autoclear=false.
+    LibAppletMode mode;                ///< See ref \ref LibAppletMode.
+    u64 layer_handle;                  ///< Output from GetIndirectLayerConsumerHandle on 2.0.0+.
+    bool creating_self;                ///< When set, indicates that the LibraryApplet title is creating itself.
+    LibAppletExitReason exitreason;    ///< Set by \ref appletHolderJoin using the output from cmd GetResult, see \ref LibAppletExitReason.
+} AppletHolder;
+
 Result appletInitialize(void);
 void appletExit(void);
 Result appletGetAppletResourceUserId(u64 *out);
@@ -81,6 +140,12 @@ AppletType appletGetAppletType(void);
 
 void appletNotifyRunning(u8 *out);
 Result appletCreateManagedDisplayLayer(u64 *out);
+
+/// Sets the state field for \ref AppletThemeColorType.
+void appletSetThemeColorType(AppletThemeColorType theme);
+
+/// Gets the state field for \ref AppletThemeColorType. Used internally by \ref libappletArgsCreate.
+AppletThemeColorType appletGetThemeColorType(void);
 
 /**
  * @brief Pops a LaunchParameter AppletStorage, the storage will be removed from sysmodule state during this.
@@ -92,6 +157,14 @@ Result appletCreateManagedDisplayLayer(u64 *out);
 Result appletPopLaunchParameter(AppletStorage *s, AppletLaunchParameterKind kind);
 
 Result appletGetDesiredLanguage(u64 *LanguageCode);
+
+/// Only available with AppletType_*Application.
+Result appletSetTerminateResult(Result res);
+
+/// Set media playback state.
+/// If state is set to true, screen dimming and auto sleep is disabled.
+/// For *Application, this uses cmd SetMediaPlaybackStateForApplication, otherwise cmd SetMediaPlaybackState is used.
+Result appletSetMediaPlaybackState(bool state);
 
 /// Gets whether video recording is supported.
 /// See also \ref appletInitializeGamePlayRecording.
@@ -134,6 +207,105 @@ Result appletSetScreenShotPermission(s32 val);
 Result appletSetScreenShotImageOrientation(s32 val);
 
 /**
+ * @brief Pushes a storage to the general channel. Used for sending requests to qlaunch.
+ * @note  This is not usable under an Application, however it is usable under a LibraryApplet.
+ * @note  This uses \ref appletStorageClose automatically.
+ * @param s Storage object.
+ */
+Result appletPushToGeneralChannel(AppletStorage *s);
+
+/**
+ * @brief Creates a LibraryApplet.
+ * @param h AppletHolder object.
+ * @param id See \ref AppletId.
+ * @param mode See \ref LibAppletMode.
+ */
+Result appletCreateLibraryApplet(AppletHolder *h, AppletId id, LibAppletMode mode);
+
+/**
+ * @brief Creates a LibraryApplet. This is for when a LibraryApplet title creates itself.
+ * @note  Identical to \ref appletCreateLibraryApplet except this sets the creating_self flag to true.
+ * @param h AppletHolder object.
+ * @param id See \ref AppletId.
+ * @param mode See \ref LibAppletMode.
+ */
+Result appletCreateLibraryAppletSelf(AppletHolder *h, AppletId id, LibAppletMode mode);
+
+/// Closes an AppletHolder object.
+void appletHolderClose(AppletHolder *h);
+
+/**
+ * @brief Gets the IndirectLayerConsumerHandle loaded during \ref appletCreateLibraryApplet, on 2.0.0+.
+ * @note  Only available when \ref LibAppletMode is \ref LibAppletMode_Unknown3.
+ * @param h AppletHolder object.
+ * @param out Output IndirectLayerConsumerHandle.
+ */
+Result appletHolderGetIndirectLayerConsumerHandle(AppletHolder *h, u64 *out);
+
+/**
+ * @brief Starts the LibraryApplet.
+ * @param h AppletHolder object.
+ */
+Result appletHolderStart(AppletHolder *h);
+
+/**
+ * @brief Waits for the LibraryApplet to exit.
+ * @param h AppletHolder object.
+ */
+void appletHolderJoin(AppletHolder *h);
+
+/**
+ * @brief Gets the \ref LibAppletExitReason set by \ref appletHolderJoin.
+ * @param h AppletHolder object.
+ */
+LibAppletExitReason appletHolderGetExitReason(AppletHolder *h);
+
+/**
+ * @brief Waits for the PopInteractiveOutDataEvent and StateChangedEvent.
+ * @return false for error / when StateChangedEvent was signaled, and true when PopInteractiveOutDataEvent was signaled.
+ * @param h AppletHolder object.
+ */
+bool appletHolderWaitInteractiveOut(AppletHolder *h);
+
+/**
+ * @brief Pushes a storage for LibraryApplet input.
+ * @note  This uses \ref appletStorageClose automatically.
+ * @param h AppletHolder object.
+ * @param s Storage object.
+ */
+Result appletHolderPushInData(AppletHolder *h, AppletStorage *s);
+
+/**
+ * @brief Pops a storage from LibraryApplet output.
+ * @param h AppletHolder object.
+ * @param s Storage object.
+ */
+Result appletHolderPopOutData(AppletHolder *h, AppletStorage *s);
+
+/**
+ * @brief Pushes a storage for LibraryApplet Extra storage input.
+ * @note  This uses \ref appletStorageClose automatically.
+ * @param h AppletHolder object.
+ * @param s Storage object.
+ */
+Result appletHolderPushExtraStorage(AppletHolder *h, AppletStorage *s);
+
+/**
+ * @brief Pushes a storage for LibraryApplet Interactive input.
+ * @note  This uses \ref appletStorageClose automatically.
+ * @param h AppletHolder object.
+ * @param s Storage object.
+ */
+Result appletHolderPushInteractiveInData(AppletHolder *h, AppletStorage *s);
+
+/**
+ * @brief Pops a storage from LibraryApplet Interactive output.
+ * @param h AppletHolder object.
+ * @param s Storage object.
+ */
+Result appletHolderPopInteractiveOutData(AppletHolder *h, AppletStorage *s);
+
+/**
  * @brief Creates a storage.
  * @param s Storage object.
  * @param size Size of storage.
@@ -143,10 +315,11 @@ Result appletCreateStorage(AppletStorage *s, s64 size);
 /**
  * @brief Creates a TransferMemory storage.
  * @param s Storage object.
+ * @param buffer TransferMemory buffer, will be automatically allocated if NULL.
  * @param size Size of storage.
  * @param writable Controls whether writing to the storage is allowed with \ref appletStorageWrite.
  */
-Result appletCreateTransferMemoryStorage(AppletStorage *s, s64 size, bool writable);
+Result appletCreateTransferMemoryStorage(AppletStorage *s, void* buffer, s64 size, bool writable);
 
 /**
  * @brief Creates a HandleStorage. Only available on 2.0.0+.
@@ -159,11 +332,13 @@ Result appletCreateHandleStorage(AppletStorage *s, s64 inval, Handle handle);
 /**
  * @brief Creates a HandleStorage using TransferMemory. Wrapper for \ref appletCreateHandleStorage.
  * @param s Storage object.
+ * @param buffer TransferMemory buffer, will be automatically allocated if NULL.
  * @param size Size of storage.
  */
-Result appletCreateHandleStorageTmem(AppletStorage *s, s64 size);
+Result appletCreateHandleStorageTmem(AppletStorage *s, void* buffer, s64 size);
 
 /// Closes the storage object. TransferMemory closing is seperate, see \ref appletStorageCloseTmem.
+/// Other applet functions which push an input storage will automatically call this.
 void appletStorageClose(AppletStorage *s);
 
 /// Closes the TransferMemory in the storage object. For TransferMemory storage created by the current process, this must be called after the LibraryApplet finishes using it (if sent to one).

@@ -8,8 +8,8 @@ endif
 
 include $(DEVKITPRO)/devkitA64/base_rules
 
-export LIBNX_MAJOR	:= 1
-export LIBNX_MINOR	:= 6
+export LIBNX_MAJOR	:= 2
+export LIBNX_MINOR	:= 0
 export LIBNX_PATCH	:= 0
 
 
@@ -24,7 +24,7 @@ VERSION	:=	$(LIBNX_MAJOR).$(LIBNX_MINOR).$(LIBNX_PATCH)
 #---------------------------------------------------------------------------------
 TARGET		:=	nx
 #BUILD		:=	build
-SOURCES		:=	source/arm source/kernel source/services source/nvidia source/nvidia/ioctl source/nvidia/gpu source/display source/audio source/runtime source/runtime/devices source/runtime/util/utf
+SOURCES		:=	source/arm source/kernel source/services source/nvidia source/nvidia/ioctl source/display source/audio source/applets source/runtime source/runtime/devices source/runtime/util/utf
 DATA		:=	data
 INCLUDES	:=	include external/bsd/include
 

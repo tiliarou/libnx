@@ -1,3 +1,8 @@
+/**
+ * @file types.h
+ * @brief Definitions for Android-related types and enumerations.
+ * @copyright libnx Authors
+ */
 #pragma once
 #include "../types.h"
 
@@ -133,3 +138,10 @@ enum {
     /* rotate source image 270 degrees clock-wise */
     NATIVE_WINDOW_TRANSFORM_ROT_270 = HAL_TRANSFORM_ROT_270,
 };
+
+// From Android native_handle.h.
+typedef struct {
+    int version;
+    int num_fds;
+    int num_ints;
+} NativeHandle;
