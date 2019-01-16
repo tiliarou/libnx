@@ -133,6 +133,11 @@ typedef struct {
     LibAppletExitReason exitreason;    ///< Set by \ref appletHolderJoin using the output from cmd GetResult, see \ref LibAppletExitReason.
 } AppletHolder;
 
+/// 'pdm' ApplicationPlayStatistics
+typedef struct {
+    u8 unk_x0[0x8];
+} AppletApplicationPlayStatistics;
+
 Result appletInitialize(void);
 void appletExit(void);
 Result appletGetAppletResourceUserId(u64 *out);
@@ -190,6 +195,17 @@ Result appletBeginBlockingHomeButton(s64 val);
 Result appletEndBlockingHomeButton(void);
 
 /**
+ * @brief Gets ApplicationPlayStatistics.
+ * @note Only available with AppletType_*Application on 5.0.0+.
+ * @note This may return no output in some cases.
+ * @param stats Output \ref AppletApplicationPlayStatistics array.
+ * @param titleIDs Input titleIDs array.
+ * @param count Total entries in the input/output arrays.
+ * @param out Output s32.
+ */
+Result appletQueryApplicationPlayStatistics(AppletApplicationPlayStatistics *stats, const u64 *titleIDs, s32 count, s32 *out);
+
+/**
  * @brief Delay exiting until \ref appletUnlockExit is called, with a 15 second timeout once exit is requested.
  * @note When exit is requested \ref appletMainLoop will return false, hence any main-loop using appletMainLoop will exit. This allows the app to handle cleanup post-main-loop instead of being force-terminated.
  * @note If the above timeout occurs after exit was requested where \ref appletUnlockExit was not called, the process will be forced-terminated.
@@ -234,6 +250,9 @@ Result appletCreateLibraryAppletSelf(AppletHolder *h, AppletId id, LibAppletMode
 /// Closes an AppletHolder object.
 void appletHolderClose(AppletHolder *h);
 
+/// Returns whether the AppletHolder object was initialized.
+bool appletHolderActive(AppletHolder *h);
+
 /**
  * @brief Gets the IndirectLayerConsumerHandle loaded during \ref appletCreateLibraryApplet, on 2.0.0+.
  * @note  Only available when \ref LibAppletMode is \ref LibAppletMode_Unknown3.
@@ -253,6 +272,12 @@ Result appletHolderStart(AppletHolder *h);
  * @param h AppletHolder object.
  */
 void appletHolderJoin(AppletHolder *h);
+
+/**
+ * @brief Waits on the LibraryApplet StateChangedEvent with timeout=0, and returns whether it was successful.
+ * @param h AppletHolder object.
+ */
+bool appletHolderCheckFinished(AppletHolder *h);
 
 /**
  * @brief Gets the \ref LibAppletExitReason set by \ref appletHolderJoin.
