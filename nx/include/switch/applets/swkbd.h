@@ -43,9 +43,35 @@ typedef enum {
 /// SwkbdInline Interactive input storage request ID.
 typedef enum {
     SwkbdRequestCommand_Finalize = 0x4,
+    SwkbdRequestCommand_SetUserWordInfo = 0x6,
     SwkbdRequestCommand_SetCustomizeDic = 0x7,
     SwkbdRequestCommand_Calc = 0xA,
 } SwkbdRequestCommand;
+
+/// SwkbdInline Interactive output storage reply ID.
+typedef enum {
+    SwkbdReplyType_FinishedInitialize    = 0x0,
+    SwkbdReplyType_ChangedString         = 0x2,
+    SwkbdReplyType_MovedCursor           = 0x3,
+    SwkbdReplyType_MovedTab              = 0x4,
+    SwkbdReplyType_DecidedEnter          = 0x5,
+    SwkbdReplyType_DecidedCancel         = 0x6,
+    SwkbdReplyType_ChangedStringUtf8     = 0x7,
+    SwkbdReplyType_MovedCursorUtf8       = 0x8,
+    SwkbdReplyType_DecidedEnterUtf8      = 0x9,
+    SwkbdReplyType_UnsetCustomizeDic     = 0xA,
+    SwkbdReplyType_ReleasedUserWordInfo  = 0xB,
+} SwkbdReplyType;
+
+/// SwkbdInline State
+typedef enum {
+    SwkbdState_Inactive       = 0x0,  ///< Default state from \ref swkbdInlineCreate, before a state is set by \ref swkbdInlineUpdate when a reply is received. Also indicates that the applet is no longer running.
+    SwkbdState_Initialized    = 0x1,
+    SwkbdState_Unknown2       = 0x2,
+    SwkbdState_TextAvailable  = 0x3,  ///< Text is available since a ChangedString* reply was received.
+    SwkbdState_Submitted      = 0x4,  ///< The user pressed the ok-button, submitting the text and closing the applet.
+    SwkbdState_Unknown5       = 0x5,
+} SwkbdState;
 
 /// Value for \ref SwkbdInitializeArg mode. Controls the LibAppletMode when launching the applet.
 typedef enum {
@@ -107,6 +133,11 @@ typedef struct {
     u8 unk_x0[0x64];
 } SwkbdDictWord;
 
+/// Input data for SwkbdInline request SetCustomizeDic.
+typedef struct {
+    u8 unk_x0[0x70];
+} SwkbdCustomizeDicInfo;
+
 typedef struct {
     u32 unk_x0;
     u8 mode;            ///< See \ref SwkbdInlineMode.
@@ -127,7 +158,7 @@ typedef struct {
     u8 returnButtonFlag;             ///< Controls whether the Return button is enabled, for newlines input. 0 = disabled, non-zero = enabled.
     u16 unk_x29;
     u8 unk_x2b;
-    u32 flags;
+    u32 flags;                       ///< Bitmask 0x4: unknown.
     u8 unk_x30;
     u8 unk_x31[0x17];
 } PACKED SwkbdAppearArg;
@@ -156,12 +187,12 @@ typedef struct {
     u8 unk_x468[5];
     u16 unk_x46d;
     u8 unk_x46f;
-    float keytopScale0;          ///< Flags bitmask 0x200.
-    float keytopScale1;          ///< Flags bitmask 0x200.
-    float keytopTranslate0;      ///< Flags bitmask 0x200.
-    float keytopTranslate1;      ///< Flags bitmask 0x200.
+    float keytopScaleX;          ///< Flags bitmask 0x200.
+    float keytopScaleY;          ///< Flags bitmask 0x200.
+    float keytopTranslateX;      ///< Flags bitmask 0x200.
+    float keytopTranslateY;      ///< Flags bitmask 0x200.
     float keytopBgAlpha;         ///< Flags bitmask 0x100.
-    float unk_x484;
+    float footerBgAlpha;         ///< Flags bitmask 0x100.
     float balloonScale;          ///< Flags bitmask 0x200.
     float unk_x48c;
     u8 unk_x490[0xc];
@@ -169,17 +200,72 @@ typedef struct {
     u8 pad_x49d[3];
 } PACKED SwkbdInlineCalcArg;
 
+/// Struct data for SwkbdInline Interactive reply storage ChangedString*, at the end following the string.
+typedef struct {
+    u32 stringLen;          ///< String length in characters, without NUL-terminator.
+    s32 dicStartCursorPos;  ///< Starting cursorPos for the current dictionary word in the current text string. -1 for none.
+    s32 dicEndCursorPos;    ///< Ending cursorPos for the current dictionary word in the current text string. -1 for none.
+    s32 cursorPos;          ///< Cursor position.
+} SwkbdChangedStringArg;
+
+/// Struct data for SwkbdInline Interactive reply storage MovedCursor*, at the end following the string.
+typedef struct {
+    u32 stringLen;  ///< String length in characters, without NUL-terminator.
+    s32 cursorPos;  ///< Cursor position.
+} SwkbdMovedCursorArg;
+
+/// Struct data for SwkbdInline Interactive reply storage MovedTab*, at the end following the string.
+typedef struct {
+    u32 unk_x0;
+    u32 unk_x4;
+} SwkbdMovedTabArg;
+
+/// Struct data for SwkbdInline Interactive reply storage DecidedEnter*, at the end following the string.
+typedef struct {
+    u32 stringLen;  ///< String length in characters, without NUL-terminator.
+} SwkbdDecidedEnterArg;
+
+/// This callback is used by \ref swkbdInlineUpdate when handling ChangedString* replies (text changed by the user or by \ref swkbdInlineSetInputText).
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdChangedStringCb)(const char* str, SwkbdChangedStringArg* arg);
+
+/// This callback is used by \ref swkbdInlineUpdate when handling MovedCursor* replies.
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdMovedCursorCb)(const char* str, SwkbdMovedCursorArg* arg);
+
+/// This callback is used by \ref swkbdInlineUpdate when handling MovedTab* replies.
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdMovedTabCb)(const char* str, SwkbdMovedTabArg* arg);
+
+/// This callback is used by \ref swkbdInlineUpdate when handling DecidedEnter* replies (when the final text was submitted via the button).
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdDecidedEnterCb)(const char* str, SwkbdDecidedEnterArg* arg);
+
 /// InlineKeyboard
 typedef struct {
     u32 version;
     AppletHolder holder;
     SwkbdInlineCalcArg calcArg;
     bool directionalButtonAssignFlag;
+    SwkbdState state;
+
+    bool dicCustomInitialized;
+    AppletStorage dicStorage;
+
+    bool wordInfoInitialized;
+    AppletStorage wordInfoStorage;
 
     u8* interactive_tmpbuf;
     size_t interactive_tmpbuf_size;
     char* interactive_strbuf;
     size_t interactive_strbuf_size;
+
+    VoidFn finishedInitializeCb;
+    SwkbdChangedStringCb changedStringCb;
+    SwkbdMovedCursorCb movedCursorCb;
+    SwkbdMovedTabCb movedTabCb;
+    SwkbdDecidedEnterCb decidedEnterCb;
+    VoidFn releasedUserWordInfoCb;
 } SwkbdInline;
 
 /**
@@ -306,6 +392,7 @@ Result swkbdShow(SwkbdConfig* c, char* out_string, size_t out_string_size);
 /**
  * @brief Creates a SwkbdInline object.
  * @note This is essentially an asynchronous version of the regular swkbd.
+ * @note This calls \ref swkbdInlineSetUtf8Mode internally with flag=true.
  * @param s SwkbdInline object.
  */
 Result swkbdInlineCreate(SwkbdInline* s);
@@ -327,8 +414,51 @@ Result swkbdInlineLaunch(SwkbdInline* s);
  * @note Handles applet exit if needed, and also sends the \ref SwkbdInlineCalcArg to the applet if needed. Hence, this should be called at some point after writing to \ref SwkbdInlineCalcArg.
  * @note Handles applet Interactive storage output when needed.
  * @param s SwkbdInline object.
+ * @param out_state Optional output \ref SwkbdState.
  */
-Result swkbdInlineUpdate(SwkbdInline* s);
+Result swkbdInlineUpdate(SwkbdInline* s, SwkbdState* out_state);
+
+/**
+ * @brief Sets the FinishedInitialize callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb Callback
+ */
+void swkbdInlineSetFinishedInitializeCallback(SwkbdInline* s, VoidFn cb);
+
+/**
+ * @brief Sets the ChangedString callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdChangedStringCb Callback
+ */
+void swkbdInlineSetChangedStringCallback(SwkbdInline* s, SwkbdChangedStringCb cb);
+
+/**
+ * @brief Sets the MovedCursor callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdMovedCursorCb Callback
+ */
+void swkbdInlineSetMovedCursorCallback(SwkbdInline* s, SwkbdMovedCursorCb cb);
+
+/**
+ * @brief Sets the MovedTab callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdMovedTabCb Callback
+ */
+void swkbdInlineSetMovedTabCallback(SwkbdInline* s, SwkbdMovedTabCb cb);
+
+/**
+ * @brief Sets the DecidedEnter callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdDecidedEnterCb Callback
+ */
+void swkbdInlineSetDecidedEnterCallback(SwkbdInline* s, SwkbdDecidedEnterCb cb);
+
+/**
+ * @brief Sets the ReleasedUserWordInfo callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb Callback
+ */
+void swkbdInlineSetReleasedUserWordInfoCallback(SwkbdInline* s, VoidFn cb);
 
 /**
  * @brief Appear the kbd and set \ref SwkbdAppearArg.
@@ -346,13 +476,33 @@ void swkbdInlineAppear(SwkbdInline* s, SwkbdAppearArg* arg);
 void swkbdInlineDisappear(SwkbdInline* s);
 
 /**
- * @brief Creates a \ref SwkbdAppearArg which can then be passed to \ref swkbdInlineAppear.
+ * @brief Creates a \ref SwkbdAppearArg which can then be passed to \ref swkbdInlineAppear. arg is initialized with the defaults, with type being set to the input type.
  * @param arg Output \ref SwkbdAppearArg.
- * @param type Type. Must be 0..5, otherwise this will return.
- * @param flag Unknown flag
+ * @param type \ref SwkbdType type
  * @param str Input UTF-8 string for the Ok button text, this can be empty/NULL to use the default.
  */
-void swkbdInlineMakeAppearArg(SwkbdAppearArg* arg, u32 type, bool flag, const char* str);
+void swkbdInlineMakeAppearArg(SwkbdAppearArg* arg, SwkbdType type);
+
+/**
+ * @brief Sets okButtonText for the specified SwkbdAppearArg, which was previously initialized with \ref swkbdInlineMakeAppearArg.
+ * @param arg \ref SwkbdAppearArg
+ * @param str Input UTF-8 string for the Ok button text, this can be empty/NULL to use the default.
+ */
+void swkbdInlineAppearArgSetOkButtonText(SwkbdAppearArg* arg,  const char* str);
+
+/**
+ * @brief Sets the LeftButtonText, for \ref SwkbdType_NumPad. The default is "". Equivalent to \ref swkbdConfigSetLeftOptionalSymbolKey.
+ * @param arg \ref SwkbdAppearArg, previously initialized by \ref swkbdInlineMakeAppearArg.
+ * @param str UTF-8 input string.
+ */
+void swkbdInlineAppearArgSetLeftButtonText(SwkbdAppearArg* arg, const char* str);
+
+/**
+ * @brief Sets the RightButtonText, for \ref SwkbdType_NumPad. The default is "". Equivalent to \ref sswkbdConfigSetRightOptionalSymbolKey.
+ * @param arg \ref SwkbdAppearArg, previously initialized by \ref swkbdInlineMakeAppearArg.
+ * @param str UTF-8 input string.
+ */
+void swkbdInlineAppearArgSetRightButtonText(SwkbdAppearArg* arg, const char* str);
 
 /**
  * @brief Sets the audio volume.
@@ -380,12 +530,52 @@ void swkbdInlineSetInputText(SwkbdInline* s, const char* str);
 void swkbdInlineSetCursorPos(SwkbdInline* s, s32 pos);
 
 /**
+ * @brief Sets the UserWordInfo.
+ * @note Not avilable when \ref SwkbdState is above \ref SwkbdState_Initialized. Can't be used if this was already used previously.
+ * @note The specified buffer must not be used after this, until \ref swkbdInlineClose is used.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards.
+ * @note If input==NULL or total_entries==0, this will just call \ref swkbdInlineUnsetUserWordInfo internally.
+ * @param s SwkbdInline object.
+ * @param input Input data.
+ * @param entries Total entries in the buffer.
+ */
+Result swkbdInlineSetUserWordInfo(SwkbdInline* s, const SwkbdDictWord *input, s32 entries);
+
+/**
+ * @brief Request UnsetUserWordInfo.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Not avilable when \ref SwkbdState is above \ref SwkbdState_Initialized.
+ * @param s SwkbdInline object.
+ */
+Result swkbdInlineUnsetUserWordInfo(SwkbdInline* s);
+
+/**
  * @brief Sets the utf8Mode.
  * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Automatically used internally by \ref swkbdInlineCreate.
  * @param s SwkbdInline object.
  * @param flag Flag
  */
 void swkbdInlineSetUtf8Mode(SwkbdInline* s, bool flag);
+
+/**
+ * @brief Sets the CustomizeDic.
+ * @note Not avilable when \ref SwkbdState is above \ref SwkbdState_Initialized. Can't be used if this was already used previously.
+ * @note The specified buffer must not be used after this, until \ref swkbdInlineClose is used. However, it will also become available once \ref swkbdInlineUpdate handles SwkbdReplyType_UnsetCustomizeDic internally.
+ * @param s SwkbdInline object.
+ * @param buffer 0x1000-byte aligned buffer.
+ * @param size 0x1000-byte aligned buffer size.
+ * @param info Input \ref SwkbdCustomizeDicInfo
+ */
+Result swkbdInlineSetCustomizeDic(SwkbdInline* s, void* buffer, size_t size, SwkbdCustomizeDicInfo *info);
+
+/**
+ * @brief Request UnsetCustomizeDic.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Not avilable when \ref SwkbdState is above \ref SwkbdState_Initialized.
+ * @param s SwkbdInline object.
+ */
+void swkbdInlineUnsetCustomizeDic(SwkbdInline* s);
 
 /**
  * @brief Sets InputModeFadeType.
@@ -402,6 +592,39 @@ void swkbdInlineSetInputModeFadeType(SwkbdInline* s, u8 type);
  * @param flag Flag
  */
 void swkbdInlineSetAlphaEnabledInInputMode(SwkbdInline* s, bool flag);
+
+/**
+ * @brief Sets KeytopBgAlpha.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @param s SwkbdInline object.
+ * @param alpha Alpha, clamped to range 0.0f..1.0f.
+ */
+void swkbdInlineSetKeytopBgAlpha(SwkbdInline* s, float alpha);
+
+/**
+ * @brief Sets FooterBgAlpha.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @param s SwkbdInline object.
+ * @param alpha Alpha, clamped to range 0.0f..1.0f.
+ */
+void swkbdInlineSetFooterBgAlpha(SwkbdInline* s, float alpha);
+
+/**
+ * @brief Sets gfx scaling. Configures KeytopScale* and BalloonScale based on the input value.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @param s SwkbdInline object.
+ * @param scale Scale
+ */
+void swkbdInlineSetKeytopScale(SwkbdInline* s, float scale);
+
+/**
+ * @brief Sets gfx translation for the displayed swkbd image position.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @param s SwkbdInline object.
+ * @param x X
+ * @param y Y
+ */
+void swkbdInlineSetKeytopTranslate(SwkbdInline* s, float x, float y);
 
 /**
  * @brief Sets KeytopAsFloating.

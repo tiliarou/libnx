@@ -81,6 +81,10 @@ extern "C" {
 #include "switch/services/spl.h"
 #include "switch/services/ncm.h"
 #include "switch/services/psc.h"
+#include "switch/services/caps.h"
+#include "switch/services/capssc.h"
+#include "switch/services/capssu.h"
+#include "switch/services/nfc.h"
 
 #include "switch/display/binder.h"
 #include "switch/display/parcel.h"
@@ -101,6 +105,7 @@ extern "C" {
 
 #include "switch/applets/libapplet.h"
 #include "switch/applets/swkbd.h"
+#include "switch/applets/web.h"
 
 #include "switch/runtime/env.h"
 #include "switch/runtime/nxlink.h"

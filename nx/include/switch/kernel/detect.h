@@ -19,3 +19,8 @@ bool kernelAbove500(void);
 bool kernelAbove600(void);
 /// Returns true if the process has a debugger attached.
 bool detectDebugger(void);
+
+/// Returns true if the kernel is patched to allow self-process-jit.
+bool detectCfwJitPatch(void);
+/// After this has been called, libnx will pretend that CFW is not present. For testing purposes only.
+void detectPretendNotCfwForTesting(void);
