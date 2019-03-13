@@ -342,12 +342,12 @@ typedef struct JoystickPosition
 
 typedef struct MousePosition
 {
-    u32 x;
-    u32 y;
-    u32 velocityX;
-    u32 velocityY;
-    u32 scrollVelocityX;
-    u32 scrollVelocityY;
+    s32 x;
+    s32 y;
+    s32 velocityX;
+    s32 velocityY;
+    s32 scrollVelocityX;
+    s32 scrollVelocityY;
 } MousePosition;
 
 typedef struct HidVector
@@ -638,6 +638,7 @@ u64 hidMouseButtonsHeld(void);
 u64 hidMouseButtonsDown(void);
 u64 hidMouseButtonsUp(void);
 void hidMouseRead(MousePosition *pos);
+u32 hidMouseMultiRead(MousePosition *entries, u32 num_entries);
 
 bool hidKeyboardModifierHeld(HidKeyboardModifier modifier);
 bool hidKeyboardModifierDown(HidKeyboardModifier modifier);

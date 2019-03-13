@@ -253,6 +253,24 @@ Result appletSetScreenShotPermission(s32 val);
 Result appletSetScreenShotImageOrientation(s32 val);
 
 /**
+ * @brief Stops forwarding the input to the foreground app, works only in the Overlay applet context.
+ * @note You have to call this to receive inputs through the hid service when running as the overlay applet.
+ */
+Result appletBeginToWatchShortHomeButtonMessage(void);
+
+/**
+ * @brief Forwards input to the foreground app, works only in the Overlay applet context.
+ * @note After calling this the overlay applet won't receive any input until \ref appletBeginToWatchShortHomeButtonMessage is called again.
+ */
+Result appletEndToWatchShortHomeButtonMessage(void);
+
+/**
+ * @brief Get an event that fires when the home button is pressed, doesn't interfere with home menu. This event does not auto clear.
+ * @note Doesn't fire for long press.
+ */
+Result appletHomeButtonReaderLockAccessorGetEvent(Event *out_event);
+
+/**
  * @brief Pushes a storage to the general channel. Used for sending requests to qlaunch.
  * @note  This is not usable under an Application, however it is usable under a LibraryApplet.
  * @note  This uses \ref appletStorageClose automatically.
@@ -296,6 +314,12 @@ Result appletHolderGetIndirectLayerConsumerHandle(AppletHolder *h, u64 *out);
  * @param h AppletHolder object.
  */
 Result appletHolderStart(AppletHolder *h);
+
+/**
+ * @brief Requests the LibraryApplet to exit. The command is only used if \ref appletHolderCheckFinished returns false.
+ * @param h AppletHolder object.
+ */
+Result appletHolderRequestExit(AppletHolder *h);
 
 /**
  * @brief Waits for the LibraryApplet to exit.
@@ -442,7 +466,20 @@ Result appletStorageGetHandle(AppletStorage *s, s64 *out, Handle *handle);
 Result appletStorageMap(AppletStorage *s, void** addr, size_t *size);
 
 /**
+ * @brief Gets a notification message.
+ */
+Result appletGetMessage(u32 *msg);
+
+/**
+ * @brief Processes the current applet status using the specified msg.
+ * @param msg Notification message, normally from \ref appletGetMessage.
+ * @return Whether the application should continue running.
+ */
+bool appletProcessMessage(u32 msg);
+
+/**
  * @brief Processes the current applet status. Generally used within a main loop.
+ * @note Uses \ref appletGetMessage and \ref appletProcessMessage internally.
  * @return Whether the application should continue running.
  */
 bool appletMainLoop(void);
