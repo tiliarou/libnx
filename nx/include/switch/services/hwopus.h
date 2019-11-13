@@ -1,12 +1,13 @@
 /**
  * @file hwopus.h
- * @brief Hardware Opus audio service.
+ * @brief Hardware Opus audio service IPC wrapper.
  * @author yellows8
  * @copyright libnx Authors
  */
 #pragma once
 
-#include "../services/sm.h"
+#include "../types.h"
+#include "../sf/service.h"
 #include "../kernel/tmem.h"
 
 typedef struct {
@@ -34,7 +35,7 @@ typedef struct {
 Result hwopusDecoderInitialize(HwopusDecoder* decoder, s32 SampleRate, s32 ChannelCount);
 void hwopusDecoderExit(HwopusDecoder* decoder);
 
-/// Only available on 3.0.0+.
+/// Only available on [3.0.0+].
 /// See libopus multistream docs.
 Result hwopusDecoderMultistreamInitialize(HwopusDecoder* decoder, s32 SampleRate, s32 ChannelCount, s32 TotalStreamCount, s32 StereoStreamCount, u8 *channel_mapping);
 

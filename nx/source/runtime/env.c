@@ -1,13 +1,17 @@
 // Copyright 2018 plutoo
 #include <string.h>
 #include "runtime/env.h"
+#include "runtime/hosversion.h"
 #include "services/sm.h"
 #include "services/fatal.h"
 #include "services/applet.h"
+#include "services/acc.h"
 
 void NORETURN __nx_exit(Result rc, LoaderReturnFn retaddr);
 
 static bool   g_isNso = false;
+static const char* g_loaderInfo = NULL;
+static u64    g_loaderInfoSize = 0;
 static Handle g_mainThreadHandle = INVALID_HANDLE;
 static LoaderReturnFn g_loaderRetAddr = NULL;
 static void*  g_overrideHeapAddr = NULL;
@@ -20,6 +24,7 @@ static char*  g_nextLoadArgv = NULL;
 static Result g_lastLoadResult = 0;
 static bool   g_hasRandomSeed = false;
 static u64    g_randomSeed[2] = { 0, 0 };
+static AccountUid*  g_userIdStorage = NULL;
 
 extern __attribute__((weak)) u32 __nx_applet_type;
 
@@ -68,7 +73,7 @@ void envSetup(void* ctx, Handle main_thread, LoaderReturnFn saved_lr)
             break;
 
         case EntryType_OverrideService:
-            smAddOverrideHandle(ent->Value[0], ent->Value[1]);
+            smAddOverrideHandle(smServiceNameFromU64(ent->Value[0]), ent->Value[1]);
             break;
 
         case EntryType_Argv:
@@ -99,6 +104,14 @@ void envSetup(void* ctx, Handle main_thread, LoaderReturnFn saved_lr)
             g_randomSeed[1] = ent->Value[1];
             break;
 
+        case EntryType_UserIdStorage:
+            g_userIdStorage = (AccountUid*)(uintptr_t)ent->Value[0];
+            break;
+
+        case EntryType_HosVersion:
+            hosversionSet(ent->Value[0]);
+            break;
+
         default:
             if (ent->Flags & EntryFlag_IsMandatory)
             {
@@ -112,6 +125,19 @@ void envSetup(void* ctx, Handle main_thread, LoaderReturnFn saved_lr)
         ent++;
     }
 
+    g_loaderInfoSize = ent->Value[1];
+    if (g_loaderInfoSize) {
+        g_loaderInfo = (const char*)(uintptr_t)ent->Value[0];
+    }
+
+}
+
+const char* envGetLoaderInfo(void) {
+    return g_loaderInfo;
+}
+
+u64 envGetLoaderInfoSize(void) {
+    return g_loaderInfoSize;
 }
 
 Handle envGetMainThreadHandle(void) {
@@ -119,7 +145,7 @@ Handle envGetMainThreadHandle(void) {
         return g_mainThreadHandle;
     }
 
-    fatalSimple(MAKERESULT(Module_Libnx, LibnxError_HandleTooEarly));
+    fatalThrow(MAKERESULT(Module_Libnx, LibnxError_HandleTooEarly));
 }
 
 bool envIsNso(void) {
@@ -195,4 +221,8 @@ bool envHasRandomSeed(void) {
 void envGetRandomSeed(u64 out[2]) {
     out[0] = g_randomSeed[0];
     out[1] = g_randomSeed[1];
+}
+
+AccountUid* envGetUserIdStorage(void) {
+    return g_userIdStorage;
 }

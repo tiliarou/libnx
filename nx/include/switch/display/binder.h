@@ -1,22 +1,23 @@
 #pragma once
 #include "../types.h"
 #include "../kernel/event.h"
+#include "../sf/service.h"
 
 #define BINDER_FIRST_CALL_TRANSACTION 0x1
 
 typedef struct {
-    bool   created           : 1;
-    bool   initialized       : 1;
-    bool   has_transact_auto : 1;
-    s32    id;
-    size_t ipc_buffer_size;
+    bool     created;
+    bool     initialized;
+    s32      id;
+    size_t   dummy;
+    Service* relay;
 } Binder;
 
 // Note: binderClose will not close the session_handle provided to binderCreate.
 void binderCreate(Binder* b, s32 id);
 void binderClose(Binder* b);
 
-Result binderInitSession(Binder* b);
+Result binderInitSession(Binder* b, Service* relay);
 
 Result binderTransactParcel(
     Binder* b, u32 code,

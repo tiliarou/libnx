@@ -8,6 +8,7 @@
 #include "../types.h"
 #include "../services/applet.h"
 #include "../services/caps.h"
+#include "../services/acc.h"
 
 /// This indicates the type of web-applet.
 typedef enum {
@@ -28,6 +29,18 @@ typedef enum {
     WebExitReason_LastUrl     = 0x3,  ///< The applet exited due to LastUrl handling, see \ref webReplyGetLastUrl.
     WebExitReason_ErrorDialog = 0x7,  ///< The applet exited after displaying an error dialog.
 } WebExitReason;
+
+/// Button values for \ref webConfigSetBootFooterButtonVisible.
+typedef enum {
+    WebFooterButtonId_None  = 0,  ///< None, for empty \ref WebBootFooterButtonEntry. Invalid for \ref webConfigSetBootFooterButtonVisible input.
+    WebFooterButtonId_Type1 = 1,  ///< Unknown button Id 1.
+    WebFooterButtonId_Type2 = 2,  ///< Unknown button Id 2.
+    WebFooterButtonId_Type3 = 3,  ///< Unknown button Id 3.
+    WebFooterButtonId_Type4 = 4,  ///< Unknown button Id 4.
+    WebFooterButtonId_Type5 = 5,  ///< Unknown button Id 5.
+    WebFooterButtonId_Type6 = 6,  ///< Unknown button Id 6.
+    WebFooterButtonId_Max,        ///< Values starting with this are invalid.
+} WebFooterButtonId;
 
 /// Struct for the WebWifi applet input storage.
 typedef struct {
@@ -87,26 +100,35 @@ typedef struct {
 /// Common container struct for applets' reply data, from the output storage.
 typedef struct {
     bool type;                     ///< Type of reply: false = ret, true = storage.
+    WebShimKind shimKind;          ///< ShimKind
     WebCommonReturnValue ret;      ///< Reply data for reply=false.
     WebCommonTLVStorage storage;   ///< Reply data for reply=true.
 } WebCommonReply;
+
+/// Entry data for ::WebArgType_BootFooterButton.
+typedef struct {
+    WebFooterButtonId id;
+    u8 visible;
+    u16 unk_x5;
+    u8 unk_x7;
+} PACKED WebBootFooterButtonEntry;
 
 /// Types for \ref WebArgTLV, input storage.
 typedef enum {
     WebArgType_Url                                      = 0x1,    ///< [1.0.0+] String, size 0xC00. Initial URL.
     WebArgType_CallbackUrl                              = 0x3,    ///< [1.0.0+] String, size 0x400.
     WebArgType_CallbackableUrl                          = 0x4,    ///< [1.0.0+] String, size 0x400.
-    WebArgType_ApplicationId                            = 0x5,    ///< [1.0.0+] Offline-applet, u64 titleID
+    WebArgType_ApplicationId                            = 0x5,    ///< [1.0.0+] Offline-applet, u64 ApplicationId
     WebArgType_DocumentPath                             = 0x6,    ///< [1.0.0+] Offline-applet, string with size 0xC00.
     WebArgType_DocumentKind                             = 0x7,    ///< [1.0.0+] Offline-applet, u32 enum \WebDocumentKind.
-    WebArgType_SystemDataId                             = 0x8,    ///< [1.0.0+] Offline-applet, u64 titleID
+    WebArgType_SystemDataId                             = 0x8,    ///< [1.0.0+] Offline-applet, u64 SystemDataId
     WebArgType_ShareStartPage                           = 0x9,    ///< [1.0.0+] u32 enum \WebShareStartPage
     WebArgType_Whitelist                                = 0xA,    ///< [1.0.0+] String, size 0x1000.
     WebArgType_NewsFlag                                 = 0xB,    ///< [1.0.0+] u8 bool
     WebArgType_UnknownC                                 = 0xC,    ///< [1.0.0+] u8
     WebArgType_UnknownD                                 = 0xD,    ///< [1.0.0+] u8
-    WebArgType_UserID                                   = 0xE,    ///< [1.0.0+] u128 userID, controls which user-specific savedata to mount.
-    WebArgType_AlbumEntry                               = 0xF,    ///< [1.0.0+] Share-applet caps AlbumEntry
+    WebArgType_Uid                                      = 0xE,    ///< [1.0.0+] \ref AccountUid, controls which user-specific savedata to mount.
+    WebArgType_AlbumEntry0                              = 0xF,    ///< [1.0.0+] Share-applet caps AlbumEntry, entry 0.
     WebArgType_ScreenShot                               = 0x10,   ///< [1.0.0+] u8 bool
     WebArgType_EcClientCert                             = 0x11,   ///< [1.0.0+] u8 bool
     WebArgType_Unknown12                                = 0x12,   ///< [1.0.0+] u8
@@ -124,14 +146,15 @@ typedef enum {
     WebArgType_DisplayUrlKind                           = 0x1F,   ///< [1.0.0+] u8 bool, DisplayUrlKind (value = (input_enumval==0x1)).
     WebArgType_BootAsMediaPlayer                        = 0x21,   ///< [2.0.0+] u8 bool
     WebArgType_ShopJump                                 = 0x22,   ///< [2.0.0+] u8 bool
-    WebArgType_MediaPlayerUserGestureRestriction        = 0x23,   ///< [2.0.0+] u8 bool
+    WebArgType_MediaPlayerUserGestureRestriction        = 0x23,   ///< [2.0.0-5.1.0] u8 bool
+    WebArgType_MediaAutoPlay                            = 0x23,   ///< [6.0.0+] u8 bool
     WebArgType_LobbyParameter                           = 0x24,   ///< [2.0.0+] String, size 0x100.
     WebArgType_ApplicationAlbumEntry                    = 0x26,   ///< [3.0.0+] Share-applet caps ApplicationAlbumEntry
     WebArgType_JsExtension                              = 0x27,   ///< [3.0.0+] u8 bool
     WebArgType_AdditionalCommentText                    = 0x28,   ///< [4.0.0+] String, size 0x100. Share-applet AdditionalCommentText.
     WebArgType_TouchEnabledOnContents                   = 0x29,   ///< [4.0.0+] u8 bool
     WebArgType_UserAgentAdditionalString                = 0x2A,   ///< [4.0.0+] String, size 0x80.
-    WebArgType_AdditionalMediaData                      = 0x2B,   ///< [4.0.0+] Share-applet 0x10-byte u8 array, AdditionalMediaData. If the user-input size is less than 0x10, the remaining data used for the TLV is cleared.
+    WebArgType_AdditionalMediaData0                     = 0x2B,   ///< [4.0.0+] Share-applet 0x10-byte u8 array, AdditionalMediaData. Entry 0. If the user-input size is less than 0x10, the remaining data used for the TLV is cleared.
     WebArgType_MediaPlayerAutoClose                     = 0x2C,   ///< [4.0.0+] u8 bool
     WebArgType_PageCache                                = 0x2D,   ///< [4.0.0+] u8 bool
     WebArgType_WebAudio                                 = 0x2E,   ///< [4.0.0+] u8 bool
@@ -142,25 +165,39 @@ typedef enum {
     WebArgType_MediaCreatorApplicationRatingAge         = 0x34,   ///< [5.0.0+] Share-applet 0x20-byte s8 array, MediaCreatorApplicationRatingAge.
     WebArgType_BootLoadingIcon                          = 0x35,   ///< [5.0.0+] u8 bool
     WebArgType_PageScrollIndicator                      = 0x36,   ///< [5.0.0+] u8 bool
+    WebArgType_MediaPlayerSpeedControl                  = 0x37,   ///< [6.0.0+] u8 bool
+    WebArgType_AlbumEntry1                              = 0x38,   ///< [6.0.0+] Share-applet caps AlbumEntry, entry 1.
+    WebArgType_AlbumEntry2                              = 0x39,   ///< [6.0.0+] Share-applet caps AlbumEntry, entry 2.
+    WebArgType_AlbumEntry3                              = 0x3A,   ///< [6.0.0+] Share-applet caps AlbumEntry, entry 3.
+    WebArgType_AdditionalMediaData1                     = 0x3B,   ///< [6.0.0+] Share-applet 0x10-byte u8 array, AdditionalMediaData. Entry 1.
+    WebArgType_AdditionalMediaData2                     = 0x3C,   ///< [6.0.0+] Share-applet 0x10-byte u8 array, AdditionalMediaData. Entry 2.
+    WebArgType_AdditionalMediaData3                     = 0x3D,   ///< [6.0.0+] Share-applet 0x10-byte u8 array, AdditionalMediaData. Entry 3.
+    WebArgType_BootFooterButton                         = 0x3E,   ///< [6.0.0+] Array of \ref WebBootFooterButtonEntry with 0x10 entries.
+    WebArgType_OverrideWebAudioVolume                   = 0x3F,   ///< [6.0.0+] float
+    WebArgType_OverrideMediaAudioVolume                 = 0x40,   ///< [6.0.0+] float
+    WebArgType_SessionBootMode                          = 0x41,   ///< [7.0.0+] u32 enum WebSessionBootMode
+    WebArgType_SessionFlag                              = 0x42,   ///< [7.0.0+] u8 bool, enables using WebSession when set.
+    WebArgType_MediaPlayerUi                            = 0x43,   ///< [8.0.0+] u8 bool
 } WebArgType;
 
 /// Types for \ref WebArgTLV, output storage.
 typedef enum {
-    WebReplyType_ExitReason          = 0x1,  ///< [3.0.0+] u32 ShareExitReason
-    WebReplyType_LastUrl             = 0x2,  ///< [3.0.0+] string
-    WebReplyType_LastUrlSize         = 0x3,  ///< [3.0.0+] u64
-    WebReplyType_SharePostResult     = 0x4,  ///< [3.0.0+] u32 SharePostResult
-    WebReplyType_PostServiceName     = 0x5,  ///< [3.0.0+] string
-    WebReplyType_PostServiceNameSize = 0x6,  ///< [3.0.0+] u64
-    WebReplyType_PostId              = 0x7,  ///< [3.0.0+] string
-    WebReplyType_PostIdSize          = 0x8,  ///< [3.0.0+] u64
+    WebReplyType_ExitReason                        = 0x1,  ///< [3.0.0+] u32 ExitReason
+    WebReplyType_LastUrl                           = 0x2,  ///< [3.0.0+] string
+    WebReplyType_LastUrlSize                       = 0x3,  ///< [3.0.0+] u64
+    WebReplyType_SharePostResult                   = 0x4,  ///< [3.0.0+] u32 SharePostResult
+    WebReplyType_PostServiceName                   = 0x5,  ///< [3.0.0+] string
+    WebReplyType_PostServiceNameSize               = 0x6,  ///< [3.0.0+] u64
+    WebReplyType_PostId                            = 0x7,  ///< [3.0.0+] string
+    WebReplyType_PostIdSize                        = 0x8,  ///< [3.0.0+] u64
+    WebReplyType_MediaPlayerAutoClosedByCompletion = 0x9,  ///< [8.0.0+] u8 bool
 } WebReplyType;
 
 /// This controls the kind of content to mount with Offline-applet.
 typedef enum {
     WebDocumentKind_OfflineHtmlPage             = 0x1,  ///< Use the HtmlDocument NCA content from the application.
     WebDocumentKind_ApplicationLegalInformation = 0x2,  ///< Use the LegalInformation NCA content from the application.
-    WebDocumentKind_SystemDataPage              = 0x3,  ///< Use the Data NCA content from the specified title, see also: https://switchbrew.org/wiki/Title_list#System_Data_Archives
+    WebDocumentKind_SystemDataPage              = 0x3,  ///< Use the Data NCA content from the specified SystemData, see also: https://switchbrew.org/wiki/Title_list#System_Data_Archives
 } WebDocumentKind;
 
 /// This controls the initial page for ShareApplet, used by \ref webShareCreate.
@@ -216,7 +253,7 @@ void webWifiCreate(WebWifiConfig* config, const char* conntest_url, const char* 
 Result webWifiShow(WebWifiConfig* config, WebWifiReturnValue *out);
 
 /**
- * @brief Creates the config for WebApplet. This applet uses an URL whitelist loaded from the user-process host title, which is only loaded when running under an Application. Content mounting *must* be successful otherwise the applet will throw a fatalerr.
+ * @brief Creates the config for WebApplet. This applet uses an URL whitelist loaded from the user-process host Application, which is only loaded when running under an Application.
  * @note Sets ::WebArgType_UnknownD, and ::WebArgType_Unknown12 on pre-3.0.0, to value 1.
  * @param config WebCommonConfig object.
  * @param url Initial URL navigated to by the applet.
@@ -233,7 +270,7 @@ Result webPageCreate(WebCommonConfig* config, const char* url);
 Result webNewsCreate(WebCommonConfig* config, const char* url);
 
 /**
- * @brief Creates the config for WebApplet. This is based on \ref webPageCreate, for YouTubeVideo. Hence other functions referencing \ref webPageCreate also apply to this. This uses a whitelist which essentially only allows youtube embed/ URLs (without mounting content from the host title).
+ * @brief Creates the config for WebApplet. This is based on \ref webPageCreate, for YouTubeVideo. Hence other functions referencing \ref webPageCreate also apply to this. This uses a whitelist which essentially only allows youtube embed/ URLs (without mounting content from the host Application).
  * @note This is only available on [5.0.0+].
  * @note Sets ::WebArgType_UnknownD to value 1, and sets ::WebArgType_YouTubeVideoFlag to true. Also uses \ref webConfigSetBootAsMediaPlayer with flag=true.
  * @param config WebCommonConfig object.
@@ -242,7 +279,7 @@ Result webNewsCreate(WebCommonConfig* config, const char* url);
 Result webYouTubeVideoCreate(WebCommonConfig* config, const char* url);
 
 /**
- * @brief Creates the config for Offline-applet. This applet uses local content loaded from titles.
+ * @brief Creates the config for Offline-applet. This applet uses data loaded from content.
  * @note Uses \ref webConfigSetLeftStickMode with ::WebLeftStickMode_Cursor and sets ::WebArgType_BootAsMediaPlayerInverted to false. Uses \ref webConfigSetPointer with flag = docKind == ::WebDocumentKind_OfflineHtmlPage.
  * @note For docKind ::WebDocumentKind_ApplicationLegalInformation / ::WebDocumentKind_SystemDataPage, uses \ref webConfigSetFooter with flag=true and \ref webConfigSetBackgroundKind with ::WebBackgroundKind_Default.
  * @note For docKind ::WebDocumentKind_SystemDataPage, uses \ref webConfigSetBootDisplayKind with ::WebBootDisplayKind_White.
@@ -253,16 +290,16 @@ Result webYouTubeVideoCreate(WebCommonConfig* config, const char* url);
  * @note Lastly, sets the TLVs as needed for the input params.
  * @param config WebCommonConfig object.
  * @param docKind \ref WebDocumentKind
- * @param titleID Title to load the content from. With docKind = ::WebDocumentKind_OfflineHtmlPage, titleID=0 should be used to specify the user-process titleID (non-zero is ignored with this docKind).
- * @param docPath Initial document path in RomFS, without the leading '/'. For ::WebDocumentKind_OfflineHtmlPage, this is relative to "html-document/" in RomFS. For the other docKind values, this is relative to "/" in RomFS.
+ * @param id Id to load the content from. With docKind = ::WebDocumentKind_OfflineHtmlPage, id=0 should be used to specify the user-process application (non-zero is ignored with this docKind).
+ * @param docPath Initial document path in RomFS, without the leading '/'. For ::WebDocumentKind_OfflineHtmlPage, this is relative to "html-document/" in RomFS. For the other docKind values, this is relative to "/" in RomFS. This path must contain ".htdocs/".
  */
-Result webOfflineCreate(WebCommonConfig* config, WebDocumentKind docKind, u64 titleID, const char* docPath);
+Result webOfflineCreate(WebCommonConfig* config, WebDocumentKind docKind, u64 id, const char* docPath);
 
 /**
  * @brief Creates the config for ShareApplet. This applet is for social media posting/settings.
- * @note If a non-zero userID isn't set with \ref webConfigSetUserID prior to using \ref webConfigShow, the applet will launch the profile-selector applet to select an account.
- * @note An error will be displayed if neither \ref webConfigSetAlbumEntry or \ref webConfigSetApplicationAlbumEntry are used prior to using \ref webConfigShow, with ::WebShareStartPage_Default.
- * @note Uses \ref webConfigSetLeftStickMode with ::WebLeftStickMode_Cursor, \ref webConfigSetUserID with userID=0, \ref webConfigSetDisplayUrlKind with kind=true, and sets ::WebArgType_Unknown14/::WebArgType_Unknown15 to value 1. Uses \ref webConfigSetBootDisplayKind with ::WebBootDisplayKind_Unknown3.
+ * @note If a non-zero uid isn't set with \ref webConfigSetUid prior to using \ref webConfigShow, the applet will launch the profile-selector applet to select an account.
+ * @note An error will be displayed if neither \ref webConfigSetAlbumEntry, nor \ref webConfigSetApplicationAlbumEntry, nor \ref webConfigAddAlbumEntryAndMediaData are used prior to using \ref webConfigShow, with ::WebShareStartPage_Default.
+ * @note Uses \ref webConfigSetLeftStickMode with ::WebLeftStickMode_Cursor, \ref webConfigSetUid with uid=0, \ref webConfigSetDisplayUrlKind with kind=true, and sets ::WebArgType_Unknown14/::WebArgType_Unknown15 to value 1. Uses \ref webConfigSetBootDisplayKind with ::WebBootDisplayKind_Unknown3.
  * @param config WebCommonConfig object.
  * @param page \ref WebShareStartPage
  */
@@ -271,8 +308,8 @@ Result webShareCreate(WebCommonConfig* config, WebShareStartPage page);
 /**
  * @brief Creates the config for LobbyApplet. This applet is for "Nintendo Switch Online Lounge".
  * @note Only available on [2.0.0+].
- * @note If a non-zero userID isn't set with \ref webConfigSetUserID prior to using \ref webConfigShow, the applet will launch the profile-selector applet to select an account.
- * @note Uses \ref webConfigSetLeftStickMode with ::WebLeftStickMode_Cursor, \ref webConfigSetPointer with flag=false on [3.0.0+], \ref webConfigSetUserID with userID=0, and sets ::WebArgType_Unknown14/::WebArgType_Unknown15 to value 1. Uses \ref webConfigSetBootDisplayKind with ::WebBootDisplayKind_Unknown4, \ref webConfigSetBackgroundKind with ::WebBackgroundKind_Unknown2, and sets ::WebArgType_BootAsMediaPlayerInverted to false.
+ * @note If a non-zero uid isn't set with \ref webConfigSetUid prior to using \ref webConfigShow, the applet will launch the profile-selector applet to select an account.
+ * @note Uses \ref webConfigSetLeftStickMode with ::WebLeftStickMode_Cursor, \ref webConfigSetPointer with flag=false on [3.0.0+], \ref webConfigSetUid with uid=0, and sets ::WebArgType_Unknown14/::WebArgType_Unknown15 to value 1. Uses \ref webConfigSetBootDisplayKind with ::WebBootDisplayKind_Unknown4, \ref webConfigSetBackgroundKind with ::WebBackgroundKind_Unknown2, and sets ::WebArgType_BootAsMediaPlayerInverted to false.
  * @param config WebCommonConfig object.
  */
 Result webLobbyCreate(WebCommonConfig* config);
@@ -304,13 +341,13 @@ Result webConfigSetCallbackableUrl(WebCommonConfig* config, const char* url);
 Result webConfigSetWhitelist(WebCommonConfig* config, const char* whitelist);
 
 /**
- * @brief Sets the account UserID. Controls which user-specific savedata to mount.
+ * @brief Sets the account uid. Controls which user-specific savedata to mount.
  * @note Only available with config created by \ref webPageCreate, \ref webLobbyCreate, or with Share-applet.
- * @note Used automatically by \ref webShareCreate and \ref webLobbyCreate with userID=0.
+ * @note Used automatically by \ref webShareCreate and \ref webLobbyCreate with uid=0.
  * @param config WebCommonConfig object.
- * @param userID Account userID
+ * @param uid \ref AccountUid
  */
-Result webConfigSetUserID(WebCommonConfig* config, u128 userID);
+Result webConfigSetUid(WebCommonConfig* config, AccountUid uid);
 
 /**
  * @brief Sets the Share CapsAlbumEntry.
@@ -318,7 +355,7 @@ Result webConfigSetUserID(WebCommonConfig* config, u128 userID);
  * @param config WebCommonConfig object.
  * @param entry \ref CapsAlbumEntry
  */
-Result webConfigSetAlbumEntry(WebCommonConfig* config, CapsAlbumEntry *entry);
+Result webConfigSetAlbumEntry(WebCommonConfig* config, const CapsAlbumEntry *entry);
 
 /**
  * @brief Sets the ScreenShot flag, which controls whether screen-shot capture is allowed.
@@ -433,11 +470,19 @@ Result webConfigSetShopJump(WebCommonConfig* config, bool flag);
 
 /**
  * @brief Sets the MediaPlayerUserGestureRestriction flag.
- * @note Only available with config created by \ref webPageCreate on [2.0.0+].
+ * @note Only available with config created by \ref webPageCreate on [2.0.0-5.1.0].
  * @param config WebCommonConfig object.
  * @param flag Flag
  */
 Result webConfigSetMediaPlayerUserGestureRestriction(WebCommonConfig* config, bool flag);
+
+/**
+ * @brief Sets whether MediaAutoPlay is enabled.
+ * @note Only available with config created by \ref webOfflineCreate or \ref webPageCreate, on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param flag Flag
+ */
+Result webConfigSetMediaAutoPlay(WebCommonConfig* config, bool flag);
 
 /**
  * @brief Sets the LobbyParameter.
@@ -561,6 +606,57 @@ Result webConfigSetBootLoadingIcon(WebCommonConfig* config, bool flag);
 Result webConfigSetPageScrollIndicator(WebCommonConfig* config, bool flag);
 
 /**
+ * @brief Sets whether MediaPlayerSpeedControl is enabled.
+ * @note Only available with config created by \ref webOfflineCreate or \ref webPageCreate, on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param flag Flag
+ */
+Result webConfigSetMediaPlayerSpeedControl(WebCommonConfig* config, bool flag);
+
+/**
+ * @brief Adds a pair of Share CapsAlbumEntry + optionally AdditionalMediaData. This can be used up to 4 times, for setting multiple pairs.
+ * @note Only available with config created by \ref webShareCreate on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param entry \ref CapsAlbumEntry
+ * @param data Input data for AdditionalMediaData. Optional, can be NULL.
+ * @param size Size of the input data, max size is 0x10. Optional, can be 0.
+ */
+Result webConfigAddAlbumEntryAndMediaData(WebCommonConfig* config, const CapsAlbumEntry *entry, const u8* data, size_t size);
+
+/**
+ * @brief Sets whether the specified BootFooterButton is visible.
+ * @note Only available with config created by \ref webOfflineCreate on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param button \ref WebFooterButtonId
+ * @param visible Visible flag.
+ */
+Result webConfigSetBootFooterButtonVisible(WebCommonConfig* config, WebFooterButtonId button, bool visible);
+
+/**
+ * @brief Sets OverrideWebAudioVolume.
+ * @note Only available with config created by \ref webOfflineCreate or \ref webPageCreate, on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param value Value
+ */
+Result webConfigSetOverrideWebAudioVolume(WebCommonConfig* config, float value);
+
+/**
+ * @brief Sets OverrideMediaAudioVolume.
+ * @note Only available with config created by \ref webOfflineCreate or \ref webPageCreate, on [6.0.0+].
+ * @param config WebCommonConfig object.
+ * @param value Value
+ */
+Result webConfigSetOverrideMediaAudioVolume(WebCommonConfig* config, float value);
+
+/**
+ * @brief Sets whether MediaPlayerUi is enabled.
+ * @note Only available with config created by \ref webOfflineCreate on [8.0.0+].
+ * @param config WebCommonConfig object.
+ * @param flag Flag
+ */
+Result webConfigSetMediaPlayerUi(WebCommonConfig* config, bool flag);
+
+/**
  * @brief Launches the {web applet} with the specified config and waits for it to exit.
  * @param config WebCommonConfig object.
  * @param out Optional output applet reply data, can be NULL.
@@ -620,4 +716,12 @@ Result webReplyGetPostServiceName(WebCommonReply *reply, char *outstr, size_t ou
  * @param out_size Output string length including NUL-terminator, for the original input string in the reply loaded from a separate size field.
  */
 Result webReplyGetPostId(WebCommonReply *reply, char *outstr, size_t outstr_maxsize, size_t *out_size);
+
+/**
+ * @brief Gets the MediaPlayerAutoClosedByCompletion flag from the specified reply.
+ * @note Only available with reply data from Web on [8.0.0+].
+ * @param reply WebCommonReply object.
+ * @param flag Output flag
+ */
+Result webReplyGetMediaPlayerAutoClosedByCompletion(WebCommonReply *reply, bool *flag);
 

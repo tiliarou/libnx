@@ -1,284 +1,159 @@
 // Copyright 2018 SciresM
+#define NX_SERVICE_ASSUME_NON_DOMAIN
 #include <string.h>
-#include "types.h"
-#include "result.h"
-#include "arm/atomics.h"
-#include "kernel/ipc.h"
+#include "service_guard.h"
 #include "runtime/hosversion.h"
 #include "services/ro.h"
-#include "services/sm.h"
 
-static Service g_roSrv, g_dmntSrv;
-static u64 g_roRefCnt, g_dmntRefCnt;
+static Service g_roSrv, g_ro1Srv, g_dmntSrv;
 
-static Result _ldrRoInitialize(void);
+NX_GENERATE_SERVICE_GUARD(ldrRo);
+NX_GENERATE_SERVICE_GUARD(ro1);
+NX_GENERATE_SERVICE_GUARD(roDmnt);
 
-Result ldrRoInitialize(void) {
-    atomicIncrement64(&g_roRefCnt);
+NX_INLINE Result _rosrvInitialize(Service* srv);
+NX_INLINE Result _rosrvLoadNro(Service* srv, u64* out_address, u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size);
+NX_INLINE Result _rosrvUnloadNro(Service* srv, u64 nro_address);
+NX_INLINE Result _rosrvLoadNrr(Service* srv, u64 cmd_id, u64 nrr_address, u64 nrr_size);
+NX_INLINE Result _rosrvUnloadNrr(Service* srv, u64 nrr_address);
 
-    if (serviceIsActive(&g_roSrv))
-        return 0;
-
+Result _ldrRoInitialize(void) {
     Result rc = smGetService(&g_roSrv, "ldr:ro");
-
-    if (R_SUCCEEDED(rc)) {
-        rc = _ldrRoInitialize();
-    }
-
+    if (R_SUCCEEDED(rc))
+        rc = _rosrvInitialize(&g_roSrv);
     return rc;
 }
 
-void ldrRoExit(void) {
-    if (atomicDecrement64(&g_roRefCnt) == 0)
-        serviceClose(&g_roSrv);
+void _ldrRoCleanup(void) {
+    serviceClose(&g_roSrv);
 }
 
-Result roDmntInitialize(void) {
+Service* ldrRoGetServiceSession(void) {
+    return &g_roSrv;
+}
+
+Result _ro1Initialize(void) {
+    if (hosversionBefore(7,0,0)) return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+    Result rc = smGetService(&g_ro1Srv, "ro:1");
+    if (R_SUCCEEDED(rc))
+        rc = _rosrvInitialize(&g_ro1Srv);
+    return rc;
+}
+
+void _ro1Cleanup(void) {
+    serviceClose(&g_ro1Srv);
+}
+
+Service* ro1GetServiceSession(void) {
+    return &g_ro1Srv;
+}
+
+Result _roDmntInitialize(void) {
     if (hosversionBefore(3,0,0)) return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
-
-    atomicIncrement64(&g_dmntRefCnt);
-
-    if (serviceIsActive(&g_dmntSrv))
-        return 0;
-
     return smGetService(&g_dmntSrv, "ro:dmnt");
 }
 
-void roDmntExit(void) {
-    if (atomicDecrement64(&g_dmntRefCnt) == 0)
-        serviceClose(&g_dmntSrv);
+void _roDmntCleanup(void) {
+    serviceClose(&g_dmntSrv);
 }
 
-Result ldrRoLoadNro(u64* out_address, u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcSendPid(&c);
+Service* roDmntGetServiceSession(void) {
+    return &g_dmntSrv;
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 pid;
+Result _rosrvInitialize(Service* srv) {
+    return serviceDispatch(srv, 4,
+        .in_num_handles = 1,
+        .in_handles = { CUR_PROCESS_HANDLE },
+    );
+}
+
+Result _rosrvLoadNro(Service* srv, u64* out_address, u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size) {
+    const struct {
+        u64 pid_placeholder;
         u64 nro_address;
         u64 nro_size;
         u64 bss_address;
         u64 bss_size;
-    } *raw;
+    } in = { 0, nro_address, nro_size, bss_address, bss_size };
+    return serviceDispatchInOut(srv, 0, in, *out_address, .in_send_pid = true);
+}
 
-    raw = serviceIpcPrepareHeader(&g_roSrv, &c, sizeof(*raw));
+Result _rosrvUnloadNro(Service* srv, u64 nro_address) {
+    const struct {
+        u64 pid_placeholder;
+        u64 nro_address;
+    } in = { 0, nro_address };
+    return serviceDispatchIn(srv, 1, in, .in_send_pid = true);
+}
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->pid = 0;
-    raw->nro_address = nro_address;
-    raw->nro_size = nro_size;
-    raw->bss_address = bss_address;
-    raw->bss_size = bss_size;
+Result _rosrvLoadNrr(Service* srv, u64 cmd_id, u64 nrr_address, u64 nrr_size) {
+    const struct {
+        u64 pid_placeholder;
+        u64 nrr_address;
+        u64 nrr_size;
+    } in = { 0, nrr_address, nrr_size };
+    return serviceDispatchIn(srv, cmd_id, in, .in_send_pid = true);
+}
 
-    Result rc = serviceIpcDispatch(&g_roSrv);
+Result _rosrvUnloadNrr(Service* srv, u64 nrr_address) {
+    const struct {
+        u64 pid_placeholder;
+        u64 nrr_address;
+    } in = { 0, nrr_address };
+    return serviceDispatchIn(srv, 3, in, .in_send_pid = true);
+}
 
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 out_address;
-        } *resp;
-
-        serviceIpcParse(&g_roSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            if (out_address) *out_address = resp->out_address;
-        }
-    }
-
-    return rc;
+Result ldrRoLoadNro(u64* out_address, u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size) {
+    return _rosrvLoadNro(&g_roSrv, out_address, nro_address, nro_size, bss_address, bss_size);
 }
 
 Result ldrRoUnloadNro(u64 nro_address) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcSendPid(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 pid;
-        u64 nro_address;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_roSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 1;
-    raw->pid = 0;
-    raw->nro_address = nro_address;
-
-    Result rc = serviceIpcDispatch(&g_roSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_roSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _rosrvUnloadNro(&g_roSrv, nro_address);
 }
 
 Result ldrRoLoadNrr(u64 nrr_address, u64 nrr_size) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcSendPid(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 pid;
-        u64 nrr_address;
-        u64 nrr_size;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_roSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 2;
-    raw->pid = 0;
-    raw->nrr_address = nrr_address;
-    raw->nrr_size = nrr_size;
-
-    Result rc = serviceIpcDispatch(&g_roSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_roSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _rosrvLoadNrr(&g_roSrv, 2, nrr_address, nrr_size);
 }
 
 Result ldrRoUnloadNrr(u64 nrr_address) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcSendPid(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 pid;
-        u64 nrr_address;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_roSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 3;
-    raw->pid = 0;
-    raw->nrr_address = nrr_address;
-
-    Result rc = serviceIpcDispatch(&g_roSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_roSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _rosrvUnloadNrr(&g_roSrv, nrr_address);
 }
 
-Result _ldrRoInitialize(void) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcSendHandleCopy(&c, CUR_PROCESS_HANDLE);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_roSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 4;
-
-    Result rc = serviceIpcDispatch(&g_roSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_roSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
+Result ldrRoLoadNrrEx(u64 nrr_address, u64 nrr_size) {
+    if (hosversionBefore(7,0,0)) {
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
     }
-
-    return rc;
+    return _rosrvLoadNrr(&g_roSrv, 10, nrr_address, nrr_size);
 }
 
-Result roDmntGetModuleInfos(u64 pid, LoaderModuleInfo *out_module_infos, size_t out_size, u32 *num_out) {
-    IpcCommand c;
-    ipcInitialize(&c);
+Result ro1LoadNro(u64* out_address, u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size) {
+    return _rosrvLoadNro(&g_ro1Srv, out_address, nro_address, nro_size, bss_address, bss_size);
+}
 
-    ipcAddRecvStatic(&c, out_module_infos, out_size, 0);
+Result ro1UnloadNro(u64 nro_address) {
+    return _rosrvUnloadNro(&g_ro1Srv, nro_address);
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 pid;
-    } *raw;
+Result ro1LoadNrr(u64 nrr_address, u64 nrr_size) {
+    return _rosrvLoadNrr(&g_ro1Srv, 2, nrr_address, nrr_size);
+}
 
-    raw = serviceIpcPrepareHeader(&g_dmntSrv, &c, sizeof(*raw));
+Result ro1UnloadNrr(u64 nrr_address) {
+    return _rosrvUnloadNrr(&g_ro1Srv, nrr_address);
+}
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->pid = pid;
+Result ro1LoadNrrEx(u64 nrr_address, u64 nrr_size) {
+    return _rosrvLoadNrr(&g_ro1Srv, 10, nrr_address, nrr_size);
+}
 
-    Result rc = serviceIpcDispatch(&g_dmntSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u32 num_out;
-        } *resp;
-
-        serviceIpcParse(&g_dmntSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-        if (R_SUCCEEDED(rc) && num_out != NULL) {
-            *num_out = resp->num_out;
-        }
-    }
-
-    return rc;
+Result roDmntGetProcessModuleInfo(u64 pid, LoaderModuleInfo *out_module_infos, size_t max_out_modules, s32 *num_out) {
+    return serviceDispatchInOut(&g_dmntSrv, 0, pid, *num_out,
+        .buffer_attrs = {
+            SfBufferAttr_HipcMapAlias | SfBufferAttr_Out,
+        },
+        .buffers = {
+            { out_module_infos,  max_out_modules * sizeof(*out_module_infos) },
+        },
+    );
 }

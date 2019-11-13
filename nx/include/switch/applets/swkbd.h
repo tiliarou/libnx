@@ -23,7 +23,7 @@ typedef enum {
     SwkbdType_QWERTY = 2,  ///< QWERTY (and variants) keyboard only.
 } SwkbdType;
 
-/// Bitmask for \ref SwkbdArgV0 keySetDisableBitmask. This disables keys on the keyboard when the corresponding bit(s) are set.
+/// Bitmask for SwkbdArgCommon::keySetDisableBitmask. This disables keys on the keyboard when the corresponding bit(s) are set.
 enum {
     SwkbdKeyDisableBitmask_Space        = BIT(1),  ///< Disable space-bar.
     SwkbdKeyDisableBitmask_At           = BIT(2),  ///< Disable '@'.
@@ -35,34 +35,43 @@ enum {
     SwkbdKeyDisableBitmask_UserName     = BIT(8),  ///< Used for \ref swkbdConfigMakePresetUserName. Disables '@', '%', and '\'.
 };
 
-/// Value for \ref SwkbdArgV0 textDrawType. Only applies when stringLenMax is 1..32, otherwise swkbd will only use SwkbdTextDrawType_Box.
+/// Value for SwkbdArgCommon::textDrawType. Only applies when stringLenMax is 1..32, otherwise swkbd will only use SwkbdTextDrawType_Box.
 typedef enum {
     SwkbdTextDrawType_Line          = 0,  ///< The text will be displayed on a line. Also enables displaying the Header and Sub text.
     SwkbdTextDrawType_Box           = 1,  ///< The text will be displayed in a box.
-    SwkbdTextDrawType_DownloadCode  = 2,  ///< Used by \ref swkbdConfigMakePresetDownloadCode on 5.0.0+. Enables using \ref SwkbdArgV7 unk_x3e0.
+    SwkbdTextDrawType_DownloadCode  = 2,  ///< Used by \ref swkbdConfigMakePresetDownloadCode on [5.0.0+]. Enables using \ref SwkbdArgV7 unk_x3e0.
 } SwkbdTextDrawType;
 
 /// SwkbdInline Interactive input storage request ID.
 typedef enum {
-    SwkbdRequestCommand_Finalize = 0x4,
-    SwkbdRequestCommand_SetUserWordInfo = 0x6,
-    SwkbdRequestCommand_SetCustomizeDic = 0x7,
-    SwkbdRequestCommand_Calc = 0xA,
+    SwkbdRequestCommand_Finalize                    = 0x4,
+    SwkbdRequestCommand_SetUserWordInfo             = 0x6,
+    SwkbdRequestCommand_SetCustomizeDic             = 0x7,
+    SwkbdRequestCommand_Calc                        = 0xA,
+    SwkbdRequestCommand_SetCustomizedDictionaries   = 0xB,
+    SwkbdRequestCommand_UnsetCustomizedDictionaries = 0xC,
+    SwkbdRequestCommand_SetChangedStringV2Flag      = 0xD,
+    SwkbdRequestCommand_SetMovedCursorV2Flag        = 0xE,
 } SwkbdRequestCommand;
 
 /// SwkbdInline Interactive output storage reply ID.
 typedef enum {
-    SwkbdReplyType_FinishedInitialize    = 0x0,
-    SwkbdReplyType_ChangedString         = 0x2,
-    SwkbdReplyType_MovedCursor           = 0x3,
-    SwkbdReplyType_MovedTab              = 0x4,
-    SwkbdReplyType_DecidedEnter          = 0x5,
-    SwkbdReplyType_DecidedCancel         = 0x6,
-    SwkbdReplyType_ChangedStringUtf8     = 0x7,
-    SwkbdReplyType_MovedCursorUtf8       = 0x8,
-    SwkbdReplyType_DecidedEnterUtf8      = 0x9,
-    SwkbdReplyType_UnsetCustomizeDic     = 0xA,
-    SwkbdReplyType_ReleasedUserWordInfo  = 0xB,
+    SwkbdReplyType_FinishedInitialize           = 0x0,
+    SwkbdReplyType_ChangedString                = 0x2,
+    SwkbdReplyType_MovedCursor                  = 0x3,
+    SwkbdReplyType_MovedTab                     = 0x4,
+    SwkbdReplyType_DecidedEnter                 = 0x5,
+    SwkbdReplyType_DecidedCancel                = 0x6,
+    SwkbdReplyType_ChangedStringUtf8            = 0x7,
+    SwkbdReplyType_MovedCursorUtf8              = 0x8,
+    SwkbdReplyType_DecidedEnterUtf8             = 0x9,
+    SwkbdReplyType_UnsetCustomizeDic            = 0xA,
+    SwkbdReplyType_ReleasedUserWordInfo         = 0xB,
+    SwkbdReplyType_UnsetCustomizedDictionaries  = 0xC,
+    SwkbdReplyType_ChangedStringV2              = 0xD,
+    SwkbdReplyType_MovedCursorV2                = 0xE,
+    SwkbdReplyType_ChangedStringUtf8V2          = 0xF,
+    SwkbdReplyType_MovedCursorUtf8V2            = 0x10,
 } SwkbdReplyType;
 
 /// SwkbdInline State
@@ -83,6 +92,23 @@ typedef enum {
 
 /// TextCheck callback set by \ref swkbdConfigSetTextCheckCallback, for validating the input string when the swkbd ok-button is pressed. This buffer contains an UTF-8 string. This callback should validate the input string, then return a \ref SwkbdTextCheckResult indicating success/failure. On failure, this function must write an error message to the tmp_string buffer, which will then be displayed by swkbd.
 typedef SwkbdTextCheckResult (*SwkbdTextCheckCb)(char* tmp_string, size_t tmp_string_size);
+
+/// User dictionary word.
+typedef struct {
+    u8 unk_x0[0x64];
+} SwkbdDictWord;
+
+/// Input data for SwkbdInline request SetCustomizeDic.
+typedef struct {
+    u8 unk_x0[0x70];
+} SwkbdCustomizeDicInfo;
+
+typedef struct {
+    void* buffer;         ///< 0x1000-byte aligned buffer.
+    u32 buffer_size;      ///< 0x1000-byte aligned buffer size.
+    u64 entries[0x18];
+    u16 total_entries;
+} PACKED SwkbdCustomizedDictionarySet;
 
 /// Base swkbd arg struct.
 typedef struct {
@@ -110,15 +136,32 @@ typedef struct {
     u32 userDicOffset;
     s32 userDicEntries;
     u8 textCheckFlag;
+} SwkbdArgCommon;
+
+typedef struct {
+    SwkbdArgCommon arg;
     u8 pad_x3d1[7];
-    SwkbdTextCheckCb textCheckCb;  ///< This really doesn't belong in a struct sent to another process, but official sw does this.
+    SwkbdTextCheckCb textCheckCb;    ///< This really doesn't belong in a struct sent to another process, but official sw does this.
 } SwkbdArgV0;
 
 /// Arg struct for version 0x30007+.
 typedef struct {
     SwkbdArgV0 arg;
-    u32 unk_x3e0[8];  ///< When set and enabled via \ref SwkbdTextDrawType, controls displayed text grouping (inserts spaces, without affecting output string).
+    u32 textGrouping[8];   ///< When set and enabled via \ref SwkbdTextDrawType, controls displayed text grouping (inserts spaces, without affecting output string).
 } SwkbdArgV7;
+
+/// Arg struct for version 0x6000B+.
+typedef struct {
+    SwkbdArgCommon arg;
+    u8 pad_x3d1[3];
+    u32 textGrouping[8];   ///< Same as SwkbdArgV7::textGrouping.
+    u64 entries[0x18];     ///< This is SwkbdCustomizedDictionarySet::entries.
+    u8 total_entries;      ///< This is SwkbdCustomizedDictionarySet::total_entries.
+    u8 unkFlag;            ///< [8.0.0+]
+    u8 pad_x4b6[0xD];
+    u8 trigger;            ///< [8.0.0+]
+    u8 pad_x4c4[4];
+} SwkbdArgVB;
 
 typedef struct {
     SwkbdArgV7 arg;
@@ -127,23 +170,19 @@ typedef struct {
     size_t workbuf_size;
     s32 max_dictwords;
 
+    SwkbdCustomizedDictionarySet customizedDictionarySet;
+
+    u8 unkFlag;
+    u8 trigger;
+
     u32 version;
 } SwkbdConfig;
 
-/// User dictionary word.
-typedef struct {
-    u8 unk_x0[0x64];
-} SwkbdDictWord;
-
-/// Input data for SwkbdInline request SetCustomizeDic.
-typedef struct {
-    u8 unk_x0[0x70];
-} SwkbdCustomizeDicInfo;
-
+/// InitializeArg for SwkbdInline.
 typedef struct {
     u32 unk_x0;
-    u8 mode;            ///< See \ref SwkbdInlineMode.
-    u8 unk_x5;          ///< Only set on 5.0.0+.
+    u8 mode;            ///< See \ref SwkbdInlineMode. (u8 bool)
+    u8 unk_x5;          ///< Only set on [5.0.0+].
     u8 pad[2];
 } SwkbdInitializeArg;
 
@@ -158,12 +197,13 @@ typedef struct {
     s32 unk_x20;
     s32 unk_x24;
     u8 returnButtonFlag;             ///< Controls whether the Return button is enabled, for newlines input. 0 = disabled, non-zero = enabled.
-    u16 unk_x29;
+    u8 unk_x29;
+    u8 unk_x2a;
     u8 unk_x2b;
     u32 flags;                       ///< Bitmask 0x4: unknown.
     u8 unk_x30;
     u8 unk_x31[0x17];
-} PACKED SwkbdAppearArg;
+} SwkbdAppearArg;
 
 typedef struct {
     u32 unk_x0;
@@ -178,7 +218,7 @@ typedef struct {
     u16 inputText[0x3f4/2];      ///< Flags bitmask 0x8.
     u8 utf8Mode;                 ///< Flags bitmask 0x20.
     u8 unk_x45d;
-    u8 enableBackspace;          ///< Flags bitmask 0x8000. Only available with 5.0.0+.
+    u8 enableBackspace;          ///< Flags bitmask 0x8000. Only available with [5.0.0+].
     u8 unk_x45f[3];
     u8 keytopAsFloating;         ///< Flags bitmask 0x200.
     u8 footerScalable;           ///< Flags bitmask 0x100.
@@ -187,7 +227,8 @@ typedef struct {
     u8 disableTouch;             ///< Flags bitmask 0x200.
     u8 disableUSBKeyboard;       ///< Flags bitmask 0x800.
     u8 unk_x468[5];
-    u16 unk_x46d;
+    u8 unk_x46d;
+    u8 unk_x46e;
     u8 unk_x46f;
     float keytopScaleX;          ///< Flags bitmask 0x200.
     float keytopScaleY;          ///< Flags bitmask 0x200.
@@ -198,9 +239,11 @@ typedef struct {
     float balloonScale;          ///< Flags bitmask 0x200.
     float unk_x48c;
     u8 unk_x490[0xc];
-    u8 seGroup;                  ////< Flags bitmask: enable=0x2000, disable=0x4000. Only available with 5.0.0+.
-    u8 pad_x49d[3];
-} PACKED SwkbdInlineCalcArg;
+    u8 seGroup;                  ///< Flags bitmask: enable=0x2000, disable=0x4000. Only available with [5.0.0+].
+    u8 triggerFlag;              ///< [6.0.0+] Enables using the trigger field when set.
+    u8 trigger;                  ///< [6.0.0+] Trigger
+    u8 pad_x49f;
+} SwkbdInlineCalcArg;
 
 /// Struct data for SwkbdInline Interactive reply storage ChangedString*, at the end following the string.
 typedef struct {
@@ -231,9 +274,17 @@ typedef struct {
 /// str is the UTF-8 string for the current text.
 typedef void (*SwkbdChangedStringCb)(const char* str, SwkbdChangedStringArg* arg);
 
+/// This callback is used by \ref swkbdInlineUpdate when handling ChangedString*V2 replies (text changed by the user or by \ref swkbdInlineSetInputText).
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdChangedStringV2Cb)(const char* str, SwkbdChangedStringArg* arg, bool flag);
+
 /// This callback is used by \ref swkbdInlineUpdate when handling MovedCursor* replies.
 /// str is the UTF-8 string for the current text.
 typedef void (*SwkbdMovedCursorCb)(const char* str, SwkbdMovedCursorArg* arg);
+
+/// This callback is used by \ref swkbdInlineUpdate when handling MovedCursor*V2 replies.
+/// str is the UTF-8 string for the current text.
+typedef void (*SwkbdMovedCursorV2Cb)(const char* str, SwkbdMovedCursorArg* arg, bool flag);
 
 /// This callback is used by \ref swkbdInlineUpdate when handling MovedTab* replies.
 /// str is the UTF-8 string for the current text.
@@ -252,6 +303,7 @@ typedef struct {
     SwkbdState state;
 
     bool dicCustomInitialized;
+    bool customizedDictionariesInitialized;
     AppletStorage dicStorage;
 
     bool wordInfoInitialized;
@@ -263,8 +315,11 @@ typedef struct {
     size_t interactive_strbuf_size;
 
     VoidFn finishedInitializeCb;
+    VoidFn decidedCancelCb;
     SwkbdChangedStringCb changedStringCb;
+    SwkbdChangedStringV2Cb changedStringV2Cb;
     SwkbdMovedCursorCb movedCursorCb;
+    SwkbdMovedCursorV2Cb movedCursorV2Cb;
     SwkbdMovedTabCb movedTabCb;
     SwkbdDecidedEnterCb decidedEnterCb;
     VoidFn releasedUserWordInfoCb;
@@ -286,7 +341,7 @@ void swkbdClose(SwkbdConfig* c);
 /**
  * @brief Clears the args in the SwkbdConfig struct and initializes it with the Default Preset.
  * @note Do not use this before \ref swkbdCreate.
- * @note Sets the following fields: type = \ref SwkbdType_QWERTY, initialCursorPos = 1, returnButtonFlag = 1, blurBackground = 1. Pre-5.0.0: textDrawType = SwkbdTextDrawType_Box.
+ * @note Uses the following: swkbdConfigSetType() with \ref SwkbdType_QWERTY, swkbdConfigSetInitialCursorPos() with value 1, swkbdConfigSetReturnButtonFlag() with value 1, and swkbdConfigSetBlurBackground() with value 1. Pre-5.0.0: swkbdConfigSetTextDrawType() with \ref SwkbdTextDrawType_Box.
  * @param c SwkbdConfig struct.
  */
 void swkbdConfigMakePresetDefault(SwkbdConfig* c);
@@ -294,7 +349,7 @@ void swkbdConfigMakePresetDefault(SwkbdConfig* c);
 /**
  * @brief Clears the args in the SwkbdConfig struct and initializes it with the Password Preset.
  * @note Do not use this before \ref swkbdCreate.
- * @note Sets the following fields: type = \ref SwkbdType_QWERTY, initialCursorPos = 1, passwordFlag = 1, blurBackground = 1.
+ * @note Uses the following: swkbdConfigSetType() with \ref SwkbdType_QWERTY, swkbdConfigSetInitialCursorPos() with value 1, swkbdConfigSetPasswordFlag() with value 1, and swkbdConfigSetBlurBackground() with value 1.
  * @param c SwkbdConfig struct.
  */
 void swkbdConfigMakePresetPassword(SwkbdConfig* c);
@@ -302,7 +357,7 @@ void swkbdConfigMakePresetPassword(SwkbdConfig* c);
 /**
  * @brief Clears the args in the SwkbdConfig struct and initializes it with the UserName Preset.
  * @note Do not use this before \ref swkbdCreate.
- * @note Sets the following fields: type = \ref SwkbdType_Normal, keySetDisableBitmask = SwkbdKeyDisableBitmask_UserName, initialCursorPos = 1, blurBackground = 1.
+ * @note Uses the following: swkbdConfigSetType() with \ref SwkbdType_Normal, swkbdConfigSetKeySetDisableBitmask() with SwkbdKeyDisableBitmask_UserName, swkbdConfigSetInitialCursorPos() with value 1, and swkbdConfigSetBlurBackground() with value 1.
  * @param c SwkbdConfig struct.
  */
 void swkbdConfigMakePresetUserName(SwkbdConfig* c);
@@ -310,7 +365,7 @@ void swkbdConfigMakePresetUserName(SwkbdConfig* c);
 /**
  * @brief Clears the args in the SwkbdConfig struct and initializes it with the DownloadCode Preset.
  * @note Do not use this before \ref swkbdCreate.
- * @note Sets the following fields: type = \ref SwkbdType_Normal (\ref SwkbdType_QWERTY on 5.0.0+), keySetDisableBitmask = SwkbdKeyDisableBitmask_DownloadCode, initialCursorPos = 1, blurBackground = 1. 5.0.0+: stringLenMax = 16, stringLenMaxExt = 1, textDrawType = SwkbdTextDrawType_DownloadCode. unk_x3e0[0-2] = 0x3, 0x7, and 0xb.
+ * @note Uses the following: swkbdConfigSetType() with \ref SwkbdType_Normal (\ref SwkbdType_QWERTY on [5.0.0+]), swkbdConfigSetKeySetDisableBitmask() with SwkbdKeyDisableBitmask_DownloadCode, swkbdConfigSetInitialCursorPos() with value 1, and swkbdConfigSetBlurBackground() with value 1. [5.0.0+]: swkbdConfigSetStringLenMax() with value 16, swkbdConfigSetStringLenMaxExt() with value 1, and swkbdConfigSetTextDrawType() with SwkbdTextDrawType_DownloadCode. Uses swkbdConfigSetTextGrouping() for [0-2] with: 0x3, 0x7, and 0xb.
  * @param c SwkbdConfig struct.
  */
 void swkbdConfigMakePresetDownloadCode(SwkbdConfig* c);
@@ -338,7 +393,7 @@ void swkbdConfigSetRightOptionalSymbolKey(SwkbdConfig* c, const char* str);
 
 /**
  * @brief Sets the Header text. The default is "".
- * @note See \ref SwkbdArgV0 stringLenMax.
+ * @note See SwkbdArgCommon::stringLenMax.
  * @param c SwkbdConfig struct.
  * @param str UTF-8 input string.
  */
@@ -346,7 +401,7 @@ void swkbdConfigSetHeaderText(SwkbdConfig* c, const char* str);
 
 /**
  * @brief Sets the Sub text. The default is "".
- * @note See \ref SwkbdArgV0 stringLenMax.
+ * @note See SwkbdArgCommon::stringLenMax.
  * @param c SwkbdConfig struct.
  * @param str UTF-8 input string.
  */
@@ -376,11 +431,135 @@ void swkbdConfigSetInitialText(SwkbdConfig* c, const char* str);
 void swkbdConfigSetDictionary(SwkbdConfig* c, const SwkbdDictWord *input, s32 entries);
 
 /**
+ * @brief Sets the CustomizedDictionaries.
+ * @note Only available on [6.0.0+].
+ * @param c SwkbdConfig struct.
+ * @param dic Input \ref SwkbdCustomizedDictionarySet
+ */
+Result swkbdConfigSetCustomizedDictionaries(SwkbdConfig* c, const SwkbdCustomizedDictionarySet *dic);
+
+/**
  * @brief Sets the TextCheck callback.
  * @param c SwkbdConfig struct.
  * @param cb \ref SwkbdTextCheckCb callback.
  */
 void swkbdConfigSetTextCheckCallback(SwkbdConfig* c, SwkbdTextCheckCb cb);
+
+/**
+ * @brief Sets SwkbdArgCommon::SwkbdType.
+ * @param c SwkbdConfig struct.
+ * @param type \ref SwkbdType
+ */
+static inline void swkbdConfigSetType(SwkbdConfig* c, SwkbdType type) {
+    c->arg.arg.arg.type = type;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::dicFlag.
+ * @param c SwkbdConfig struct.
+ * @param flag Flag
+ */
+static inline void swkbdConfigSetDicFlag(SwkbdConfig* c, u8 flag) {
+    c->arg.arg.arg.dicFlag = flag;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::keySetDisableBitmask.
+ * @param c SwkbdConfig struct.
+ * @param keySetDisableBitmask keySetDisableBitmask
+ */
+static inline void swkbdConfigSetKeySetDisableBitmask(SwkbdConfig* c, u32 keySetDisableBitmask) {
+    c->arg.arg.arg.keySetDisableBitmask = keySetDisableBitmask;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::initialCursorPos.
+ * @param c SwkbdConfig struct.
+ * @param initialCursorPos initialCursorPos
+ */
+static inline void swkbdConfigSetInitialCursorPos(SwkbdConfig* c, u32 initialCursorPos) {
+    c->arg.arg.arg.initialCursorPos = initialCursorPos;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::stringLenMax.
+ * @param c SwkbdConfig struct.
+ * @param stringLenMax stringLenMax
+ */
+static inline void swkbdConfigSetStringLenMax(SwkbdConfig* c, u32 stringLenMax) {
+    c->arg.arg.arg.stringLenMax = stringLenMax;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::stringLenMaxExt.
+ * @param c SwkbdConfig struct.
+ * @param stringLenMaxExt stringLenMaxExt
+ */
+static inline void swkbdConfigSetStringLenMaxExt(SwkbdConfig* c, u32 stringLenMaxExt) {
+    c->arg.arg.arg.stringLenMaxExt = stringLenMaxExt;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::passwordFlag.
+ * @param c SwkbdConfig struct.
+ * @param flag Flag
+ */
+static inline void swkbdConfigSetPasswordFlag(SwkbdConfig* c, u32 flag) {
+    c->arg.arg.arg.passwordFlag = flag;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::textDrawType.
+ * @param c SwkbdConfig struct.
+ * @param textDrawType \ref SwkbdTextDrawType
+ */
+static inline void swkbdConfigSetTextDrawType(SwkbdConfig* c, SwkbdTextDrawType textDrawType) {
+    c->arg.arg.arg.textDrawType = textDrawType;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::returnButtonFlag.
+ * @param c SwkbdConfig struct.
+ * @param flag Flag
+ */
+static inline void swkbdConfigSetReturnButtonFlag(SwkbdConfig* c, u16 flag) {
+    c->arg.arg.arg.returnButtonFlag = flag;
+}
+
+/**
+ * @brief Sets SwkbdArgCommon::blurBackground.
+ * @param c SwkbdConfig struct.
+ * @param blurBackground blurBackground
+ */
+static inline void swkbdConfigSetBlurBackground(SwkbdConfig* c, u8 blurBackground) {
+    c->arg.arg.arg.blurBackground = blurBackground;
+}
+
+/**
+ * @brief Sets SwkbdArgV7::textGrouping.
+ * @param index Array index.
+ * @param value Value to write.
+ */
+static inline void swkbdConfigSetTextGrouping(SwkbdConfig* c, u32 index, u32 value) {
+    if (index >= sizeof(c->arg.textGrouping)/sizeof(u32)) return;
+    c->arg.textGrouping[index] = value;
+}
+
+/**
+ * @brief Sets SwkbdConfig::unkFlag, default is 0. Copied to SwkbdArgVB::unkFlag with [8.0.0+].
+ * @param flag Flag
+ */
+static inline void swkbdConfigSetUnkFlag(SwkbdConfig* c, u8 flag) {
+    c->unkFlag = flag;
+}
+
+/**
+ * @brief Sets SwkbdConfig::trigger, default is 0. Copied to SwkbdArgVB::trigger with [8.0.0+].
+ * @param trigger Trigger
+ */
+static inline void swkbdConfigSetTrigger(SwkbdConfig* c, u8 trigger) {
+    c->trigger = trigger;
+}
 
 /**
  * @brief Launch swkbd with the specified config. This will return once swkbd is finished running.
@@ -392,7 +571,7 @@ void swkbdConfigSetTextCheckCallback(SwkbdConfig* c, SwkbdTextCheckCb cb);
 Result swkbdShow(SwkbdConfig* c, char* out_string, size_t out_string_size);
 
 /**
- * @brief Creates a SwkbdInline object. Only available on 2.0.0+.
+ * @brief Creates a SwkbdInline object. Only available on [2.0.0+].
  * @note This is essentially an asynchronous version of the regular swkbd.
  * @note This calls \ref swkbdInlineSetUtf8Mode internally with flag=true.
  * @param s SwkbdInline object.
@@ -406,10 +585,19 @@ Result swkbdInlineCreate(SwkbdInline* s);
 Result swkbdInlineClose(SwkbdInline* s);
 
 /**
- * @brief Launches the applet with the SwkbdInline object.
+ * @brief Does setup for \ref SwkbdInitializeArg and launches the applet with the SwkbdInline object.
+ * @note The initArg is cleared, and on [5.0.0+] unk_x5 is set to 1.
  * @param s SwkbdInline object.
  */
 Result swkbdInlineLaunch(SwkbdInline* s);
+
+/**
+ * @brief Same as \ref swkbdInlineLaunch, except mode and unk_x5 for \ref SwkbdInitializeArg are set to the input params.
+ * @param s SwkbdInline object.
+ * @param mode Value for SwkbdInitializeArg::mode.
+ * @param unk_x5 Value for SwkbdInitializeArg::unk_x5.
+ */
+Result swkbdInlineLaunchForLibraryApplet(SwkbdInline* s, u8 mode, u8 unk_x5);
 
 /**
  * @brief Handles updating SwkbdInline state, this should be called periodically.
@@ -428,18 +616,47 @@ Result swkbdInlineUpdate(SwkbdInline* s, SwkbdState* out_state);
 void swkbdInlineSetFinishedInitializeCallback(SwkbdInline* s, VoidFn cb);
 
 /**
+ * @brief Sets the DecidedCancel callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @param s SwkbdInline object.
+ * @param cb Callback
+ */
+void swkbdInlineSetDecidedCancelCallback(SwkbdInline* s, VoidFn cb);
+
+/**
  * @brief Sets the ChangedString callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @note This clears the callback set by \ref swkbdInlineSetChangedStringV2Callback.
+ * @note This should be called after \ref swkbdInlineLaunch / \ref swkbdInlineLaunchForLibraryApplet.
  * @param s SwkbdInline object.
  * @param cb \ref SwkbdChangedStringCb Callback
  */
 void swkbdInlineSetChangedStringCallback(SwkbdInline* s, SwkbdChangedStringCb cb);
 
 /**
+ * @brief Sets the ChangedStringV2 callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @note Only available with [8.0.0+].
+ * @note This must be called after \ref swkbdInlineLaunch / \ref swkbdInlineLaunchForLibraryApplet.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdChangedStringV2Cb Callback
+ */
+void swkbdInlineSetChangedStringV2Callback(SwkbdInline* s, SwkbdChangedStringV2Cb cb);
+
+/**
  * @brief Sets the MovedCursor callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @note This clears the callback set by \ref swkbdInlineSetMovedCursorV2Callback.
+ * @note This should be called after \ref swkbdInlineLaunch / \ref swkbdInlineLaunchForLibraryApplet.
  * @param s SwkbdInline object.
  * @param cb \ref SwkbdMovedCursorCb Callback
  */
 void swkbdInlineSetMovedCursorCallback(SwkbdInline* s, SwkbdMovedCursorCb cb);
+
+/**
+ * @brief Sets the MovedCursorV2 callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
+ * @note Only available with [8.0.0+].
+ * @note This must be called after \ref swkbdInlineLaunch / \ref swkbdInlineLaunchForLibraryApplet.
+ * @param s SwkbdInline object.
+ * @param cb \ref SwkbdMovedCursorV2Cb Callback
+ */
+void swkbdInlineSetMovedCursorV2Callback(SwkbdInline* s, SwkbdMovedCursorV2Cb cb);
 
 /**
  * @brief Sets the MovedTab callback, used by \ref swkbdInlineUpdate. The default is NULL for none.
@@ -465,10 +682,20 @@ void swkbdInlineSetReleasedUserWordInfoCallback(SwkbdInline* s, VoidFn cb);
 /**
  * @brief Appear the kbd and set \ref SwkbdAppearArg.
  * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Wrapper for \ref swkbdInlineAppearEx, with trigger=0.
  * @param s SwkbdInline object.
  * @param arg Input SwkbdAppearArg.
  */
-void swkbdInlineAppear(SwkbdInline* s, SwkbdAppearArg* arg);
+void swkbdInlineAppear(SwkbdInline* s, const SwkbdAppearArg* arg);
+
+/**
+ * @brief Appear the kbd and set \ref SwkbdAppearArg.
+ * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @param s SwkbdInline object.
+ * @param arg Input SwkbdAppearArg.
+ * @param trigger Trigger, default is 0. Requires [6.0.0+], on eariler versions this will always use value 0 internally.
+ */
+void swkbdInlineAppearEx(SwkbdInline* s, const SwkbdAppearArg* arg, u8 trigger);
 
 /**
  * @brief Disappear the kbd.
@@ -561,7 +788,7 @@ void swkbdInlineSetUtf8Mode(SwkbdInline* s, bool flag);
 
 /**
  * @brief Sets the CustomizeDic.
- * @note Not avilable when \ref SwkbdState is above ::SwkbdState_Initialized. Can't be used if this was already used previously.
+ * @note Not avilable when \ref SwkbdState is above ::SwkbdState_Initialized. Can't be used if this or \ref swkbdInlineSetCustomizedDictionaries was already used previously.
  * @note The specified buffer must not be used after this, until \ref swkbdInlineClose is used. However, it will also become available once \ref swkbdInlineUpdate handles SwkbdReplyType_UnsetCustomizeDic internally.
  * @param s SwkbdInline object.
  * @param buffer 0x1000-byte aligned buffer.
@@ -577,6 +804,24 @@ Result swkbdInlineSetCustomizeDic(SwkbdInline* s, void* buffer, size_t size, Swk
  * @param s SwkbdInline object.
  */
 void swkbdInlineUnsetCustomizeDic(SwkbdInline* s);
+
+/**
+ * @brief Sets the CustomizedDictionaries.
+ * @note Not avilable when \ref SwkbdState is above ::SwkbdState_Initialized. Can't be used if this or \ref swkbdInlineSetCustomizeDic was already used previously.
+ * @note The specified buffer in dic must not be used after this, until \ref swkbdInlineClose is used. However, it will also become available once \ref swkbdInlineUpdate handles SwkbdReplyType_UnsetCustomizedDictionaries internally.
+ * @note Only available on [6.0.0+].
+ * @param s SwkbdInline object.
+ * @param dic Input \ref SwkbdCustomizedDictionarySet
+ */
+Result swkbdInlineSetCustomizedDictionaries(SwkbdInline* s, const SwkbdCustomizedDictionarySet *dic);
+
+/**
+ * @brief Request UnsetCustomizedDictionaries.
+ * @note Not avilable when \ref SwkbdState is above ::SwkbdState_Initialized.
+ * @note Only available on [6.0.0+].
+ * @param s SwkbdInline object.
+ */
+Result swkbdInlineUnsetCustomizedDictionaries(SwkbdInline* s);
 
 /**
  * @brief Sets InputModeFadeType.
@@ -660,16 +905,18 @@ void swkbdInlineSetTouchFlag(SwkbdInline* s, bool flag);
 void swkbdInlineSetUSBKeyboardFlag(SwkbdInline* s, bool flag);
 
 /**
- * @brief Sets whether DirectionalButtonAssign is enabled. The default is disabled. Only available on 4.0.0+.
+ * @brief Sets whether DirectionalButtonAssign is enabled. The default is disabled.
  * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Only available on [4.0.0+].
  * @param s SwkbdInline object.
  * @param flag Flag
  */
 void swkbdInlineSetDirectionalButtonAssignFlag(SwkbdInline* s, bool flag);
 
 /**
- * @brief Sets whether the specified SeGroup (sound effect) is enabled. The default is enabled. Only available on 5.0.0+.
+ * @brief Sets whether the specified SeGroup (sound effect) is enabled. The default is enabled.
  * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect. If called again with a different seGroup, \ref swkbdInlineUpdate must be called prior to calling this again.
+ * @note Only available on [5.0.0+].
  * @param s SwkbdInline object.
  * @param seGroup SeGroup
  * @param flag Flag
@@ -677,8 +924,9 @@ void swkbdInlineSetDirectionalButtonAssignFlag(SwkbdInline* s, bool flag);
 void swkbdInlineSetSeGroup(SwkbdInline* s, u8 seGroup, bool flag);
 
 /**
- * @brief Sets whether the backspace button is enabled. The default is enabled. Only available on 5.0.0+.
+ * @brief Sets whether the backspace button is enabled. The default is enabled.
  * @note \ref swkbdInlineUpdate must be called at some point afterwards for this to take affect.
+ * @note Only available on [5.0.0+].
  * @param s SwkbdInline object.
  * @param flag Flag
  */

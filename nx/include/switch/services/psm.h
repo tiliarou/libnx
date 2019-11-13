@@ -6,7 +6,7 @@
  */
 #pragma once
 #include "../types.h"
-#include "../services/sm.h"
+#include "../sf/service.h"
 #include "../kernel/event.h"
 
 typedef enum {
@@ -28,8 +28,14 @@ typedef struct {
     Event StateChangeEvent;  ///< autoclear=false
 } PsmSession;
 
+/// Initialize psm.
 Result psmInitialize(void);
+
+/// Exit psm.
 void psmExit(void);
+
+/// Gets the Service object for the actual psm service session.
+Service* psmGetServiceSession(void);
 
 Result psmGetBatteryChargePercentage(u32 *out);
 Result psmGetChargerType(ChargerType *out);

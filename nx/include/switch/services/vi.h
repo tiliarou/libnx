@@ -7,11 +7,15 @@
 #pragma once
 #include "../types.h"
 #include "../kernel/event.h"
-#include "../services/sm.h"
+#include "../sf/service.h"
+
+typedef struct {
+    char data[0x40];
+} ViDisplayName;
 
 typedef struct {
     u64  display_id;
-    char display_name[0x40];
+    ViDisplayName display_name;
     bool initialized;
 } ViDisplay;
 
@@ -45,9 +49,11 @@ typedef enum {
 
 /// Used with viSetDisplayPowerState.
 typedef enum {
-    ViPowerState_Off = 0,
-    ViPowerState_NotScanning = 1,
-    ViPowerState_On = 2,
+    ViPowerState_Off           = 0, ///< Screen is off.
+    ViPowerState_NotScanning   = 1, ///< [3.0.0+] Screen is on, but not scanning content.
+    ViPowerState_On            = 2, ///< [3.0.0+] Screen is on.
+
+    ViPowerState_On_Deprecated = 1, ///< [1.0.0 - 2.3.0] Screen is on.
 } ViPowerState;
 
 Result viInitialize(ViServiceType service_type);
@@ -72,28 +78,29 @@ static inline Result viOpenDefaultDisplay(ViDisplay *display)
     return viOpenDisplay("Default", display);
 }
 
-Result viGetDisplayResolution(ViDisplay *display, u64 *width, u64 *height);
-Result viGetDisplayLogicalResolution(ViDisplay *display, u32 *width, u32 *height);
+Result viGetDisplayResolution(ViDisplay *display, s32 *width, s32 *height);
+Result viGetDisplayLogicalResolution(ViDisplay *display, s32 *width, s32 *height);
 /// Only available on [3.0.0+].
-Result viSetDisplayMagnification(ViDisplay *display, u32 x, u32 y, u32 width, u32 height);
+Result viSetDisplayMagnification(ViDisplay *display, s32 x, s32 y, s32 width, s32 height);
 Result viGetDisplayVsyncEvent(ViDisplay *display, Event *event_out);
 Result viSetDisplayPowerState(ViDisplay *display, ViPowerState state);
 Result viSetDisplayAlpha(ViDisplay *display, float alpha);
-Result viGetDisplayMinimumZ(ViDisplay *display, u64 *z);
-Result viGetDisplayMaximumZ(ViDisplay *display, u64 *z);
+Result viGetZOrderCountMin(ViDisplay *display, s32 *z);
+Result viGetZOrderCountMax(ViDisplay *display, s32 *z);
 
 // Layer functions
 
 Result viCreateLayer(const ViDisplay *display, ViLayer *layer);
 Result viCreateManagedLayer(const ViDisplay *display, ViLayerFlags layer_flags, u64 aruid, u64 *layer_id);
-Result viSetLayerSize(ViLayer *layer, u64 width, u64 height);
-Result viSetLayerZ(ViLayer *layer, u64 z);
+Result viSetLayerSize(ViLayer *layer, s32 width, s32 height);
+Result viSetLayerZ(ViLayer *layer, s32 z);
 Result viSetLayerPosition(ViLayer *layer, float x, float y);
 Result viCloseLayer(ViLayer *layer);
+Result viDestroyManagedLayer(ViLayer *layer);
 
 Result viSetLayerScalingMode(ViLayer *layer, ViScalingMode scaling_mode);
 
 // IndirectLayer functions
 
-Result viGetIndirectLayerImageMap(void* buffer, size_t size, s32 width, s32 height, u64 IndirectLayerConsumerHandle, u64 *out0, u64 *out1);
+Result viGetIndirectLayerImageMap(void* buffer, size_t size, s32 width, s32 height, u64 IndirectLayerConsumerHandle, u64 *out_size, u64 *out_stride);
 Result viGetIndirectLayerImageRequiredMemoryInfo(s32 width, s32 height, u64 *out_size, u64 *out_alignment);

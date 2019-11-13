@@ -45,8 +45,8 @@ static inline bool _InRegion(VirtualRegion* r, u64 addr) {
 }
 
 void virtmemSetup(void) {
-    if (R_FAILED(_GetRegionFromInfo(&g_AddressSpace, 12, 13))) {
-        // 1.0.0 doesn't expose address space size so we have to do this dirty hack to detect it.
+    if (R_FAILED(_GetRegionFromInfo(&g_AddressSpace, InfoType_AslrRegionAddress, InfoType_AslrRegionSize))) {
+        // [1.0.0] doesn't expose address space size so we have to do this dirty hack to detect it.
         // Forgive me.
 
         Result rc = svcUnmapMemory((void*) 0xFFFFFFFFFFFFE000ULL, (void*) 0xFFFFFE000ull, 0x1000);
@@ -71,19 +71,19 @@ void virtmemSetup(void) {
         }
         else {
             // Wat.
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_WeirdKernel));
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_WeirdKernel));
         }
     } else {
-        if (R_FAILED(_GetRegionFromInfo(&g_Region[REGION_STACK], 14, 15))) {
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_BadGetInfo_Stack));
+        if (R_FAILED(_GetRegionFromInfo(&g_Region[REGION_STACK], InfoType_StackRegionAddress, InfoType_StackRegionSize))) {
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_BadGetInfo_Stack));
         }
     }
 
-    if (R_FAILED(_GetRegionFromInfo(&g_Region[REGION_HEAP], 4, 5))) {
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_BadGetInfo_Heap));
-    }    
+    if (R_FAILED(_GetRegionFromInfo(&g_Region[REGION_HEAP], InfoType_HeapRegionAddress, InfoType_HeapRegionSize))) {
+        fatalThrow(MAKERESULT(Module_Libnx, LibnxError_BadGetInfo_Heap));
+    }
 
-    _GetRegionFromInfo(&g_Region[REGION_LEGACY_ALIAS], 2, 3);
+    _GetRegionFromInfo(&g_Region[REGION_LEGACY_ALIAS], InfoType_AliasRegionAddress, InfoType_AliasRegionSize);
 }
 
 void* virtmemReserve(size_t size) {
@@ -110,7 +110,7 @@ void* virtmemReserve(size_t size) {
         rc = svcQueryMemory(&meminfo, &pageinfo, addr);
 
         if (R_FAILED(rc)) {
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_BadQueryMemory));
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_BadQueryMemory));
         }
 
         if (meminfo.type != 0) {
@@ -119,7 +119,7 @@ void* virtmemReserve(size_t size) {
             continue;
         }
 
-        if (size > meminfo.size) {
+        if (addr + size > meminfo.addr + meminfo.size) {
             // We can't fit in this region, let's move past it.
             addr = meminfo.addr + meminfo.size;
             continue;
@@ -181,7 +181,7 @@ void* virtmemReserveStack(size_t size)
         rc = svcQueryMemory(&meminfo, &pageinfo, addr);
 
         if (R_FAILED(rc)) {
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_BadQueryMemory));
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_BadQueryMemory));
         }
 
         if (meminfo.type != 0) {
@@ -190,7 +190,7 @@ void* virtmemReserveStack(size_t size)
             continue;
         }
 
-        if (size > meminfo.size) {
+        if (addr + size > meminfo.addr + meminfo.size) {
             // We can't fit in this region, let's move past it.
             addr = meminfo.addr + meminfo.size;
             continue;

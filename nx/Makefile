@@ -9,7 +9,7 @@ endif
 include $(DEVKITPRO)/devkitA64/base_rules
 
 export LIBNX_MAJOR	:= 2
-export LIBNX_MINOR	:= 0
+export LIBNX_MINOR	:= 5
 export LIBNX_PATCH	:= 0
 
 
@@ -24,14 +24,14 @@ VERSION	:=	$(LIBNX_MAJOR).$(LIBNX_MINOR).$(LIBNX_PATCH)
 #---------------------------------------------------------------------------------
 TARGET		:=	nx
 #BUILD		:=	build
-SOURCES		:=	source/arm source/kernel source/services source/nvidia source/nvidia/ioctl source/display source/audio source/applets source/runtime source/runtime/devices source/runtime/util/utf
+SOURCES		:=	source/arm source/kernel source/sf source/services source/crypto source/nvidia source/nvidia/ioctl source/display source/audio source/applets source/runtime source/runtime/devices source/runtime/util source/runtime/util/utf
 DATA		:=	data
 INCLUDES	:=	include external/bsd/include
 
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
-ARCH	:=	-march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIC -ftls-model=local-exec
+ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIC -ftls-model=local-exec
 
 CFLAGS	:=	-g -Wall -Werror \
 			-ffunction-sections \
@@ -39,7 +39,7 @@ CFLAGS	:=	-g -Wall -Werror \
 			$(ARCH) \
 			$(BUILD_CFLAGS)
 
-CFLAGS	+=	$(INCLUDE) -DSWITCH
+CFLAGS	+=	$(INCLUDE) -D__SWITCH__ -DLIBNX_NO_DEPRECATION
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 
@@ -96,7 +96,7 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 all: lib/libnx.a lib/libnxd.a
 
 dist-bin: all
-	@tar --exclude=*~ -cjf libnx-$(VERSION).tar.bz2 include lib default_icon.jpg switch_rules switch.ld switch.specs -C external/bsd include 
+	@tar --exclude=*~ -cjf libnx-$(VERSION).tar.bz2 include lib default_icon.jpg switch_rules switch.ld switch.specs -C external/bsd include
 
 dist-src:
 	@tar --exclude=*~ -cjf libnx-src-$(VERSION).tar.bz2 include source data external Makefile default_icon.jpg switch_rules switch.ld switch.specs

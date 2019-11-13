@@ -10,11 +10,15 @@
 #include "wait.h"
 
 /// Thread information structure.
-typedef struct {
-    Handle handle;       ///< Thread handle.
-    void*  stack_mem;    ///< Pointer to stack memory.
-    void*  stack_mirror; ///< Pointer to stack memory mirror.
-    size_t stack_sz;     ///< Stack size.
+typedef struct Thread {
+    Handle handle;         ///< Thread handle.
+    bool   owns_stack_mem; ///< Whether the stack memory is automatically allocated.
+    void*  stack_mem;      ///< Pointer to stack memory.
+    void*  stack_mirror;   ///< Pointer to stack memory mirror.
+    size_t stack_sz;       ///< Stack size.
+    void** tls_array;
+    struct Thread* next;
+    struct Thread** prev_next;
 } Thread;
 
 /// Creates a \ref Waiter for a \ref Thread.
@@ -28,14 +32,15 @@ static inline Waiter waiterForThread(Thread* t)
  * @param t Thread information structure which will be filled in.
  * @param entry Entrypoint of the thread.
  * @param arg Argument to pass to the entrypoint.
- * @param stack_sz Stack size (rounded up to page alignment).
+ * @param stack_mem Memory to use as backing for stack/tls/reent. Must be page-aligned. NULL argument means to allocate new memory.
+ * @param stack_sz  If stack_mem is NULL, size to use for stack. If stack_mem is non-NULL, size to use for stack + reent + tls (must be page-aligned).
  * @param prio Thread priority (0x00~0x3F); 0x2C is the usual priority of the main thread, 0x3B is a special priority on cores 0..2 that enables preemptive multithreading (0x3F on core 3).
  * @param cpuid ID of the core on which to create the thread (0~3); or -2 to use the default core for the current process.
  * @return Result code.
  */
 Result threadCreate(
-    Thread* t, ThreadFunc entry, void* arg, size_t stack_sz, int prio,
-    int cpuid);
+    Thread* t, ThreadFunc entry, void* arg, void *stack_mem, size_t stack_sz,
+    int prio, int cpuid);
 
 /**
  * @brief Starts the execution of a thread.
@@ -43,6 +48,11 @@ Result threadCreate(
  * @return Result code.
  */
 Result threadStart(Thread* t);
+
+/**
+ * @brief Exits the current thread immediately.
+ */
+void NORETURN threadExit(void);
 
 /**
  * @brief Waits for a thread to finish executing.
@@ -86,3 +96,30 @@ Result threadDumpContext(ThreadContext* ctx, Thread* t);
  * @return The current thread's handle.
  */
 Handle threadGetCurHandle(void);
+
+/**
+ * @brief Allocates a TLS slot.
+ * @param destructor Function to run automatically when a thread exits.
+ * @return TLS slot ID on success, or a negative value on failure.
+ */
+s32 threadTlsAlloc(void (* destructor)(void*));
+
+/**
+ * @brief Retrieves the value stored in a TLS slot.
+ * @param slot_id TLS slot ID.
+ * @return Value.
+ */
+void* threadTlsGet(s32 slot_id);
+
+/**
+ * @brief Stores the specified value into a TLS slot.
+ * @param slot_id TLS slot ID.
+ * @param value Value.
+ */
+void threadTlsSet(s32 slot_id, void* value);
+
+/**
+ * @brief Frees a TLS slot.
+ * @param slot_id TLS slot ID.
+ */
+void threadTlsFree(s32 slot_id);

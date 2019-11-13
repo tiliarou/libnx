@@ -144,6 +144,66 @@ typedef enum {
     DebugThreadParam_CoreMask=4,
 } DebugThreadParam;
 
+/// GetInfo IDs.
+typedef enum {
+    InfoType_CoreMask                       = 0,  ///< Bitmask of allowed Core IDs.
+    InfoType_PriorityMask                   = 1,  ///< Bitmask of allowed Thread Priorities.
+    InfoType_AliasRegionAddress             = 2,  ///< Base of the Alias memory region.
+    InfoType_AliasRegionSize                = 3,  ///< Size of the Alias memory region.
+    InfoType_HeapRegionAddress              = 4,  ///< Base of the Heap memory region.
+    InfoType_HeapRegionSize                 = 5,  ///< Size of the Heap memory region.
+    InfoType_TotalMemorySize                = 6,  ///< Total amount of memory available for process.
+    InfoType_UsedMemorySize                 = 7,  ///< Amount of memory currently used by process.
+    InfoType_DebuggerAttached               = 8,  ///< Whether current process is being debugged.
+    InfoType_ResourceLimit                  = 9,  ///< Current process's resource limit handle.
+    InfoType_IdleTickCount                  = 10, ///< Number of idle ticks on CPU.
+    InfoType_RandomEntropy                  = 11, ///< [2.0.0+] Random entropy for current process.
+    InfoType_AslrRegionAddress              = 12, ///< [2.0.0+] Base of the process's address space.
+    InfoType_AslrRegionSize                 = 13, ///< [2.0.0+] Size of the process's address space.
+    InfoType_StackRegionAddress             = 14, ///< [2.0.0+] Base of the Stack memory region.
+    InfoType_StackRegionSize                = 15, ///< [2.0.0+] Size of the Stack memory region.
+    InfoType_SystemResourceSizeTotal        = 16, ///< [3.0.0+] Total memory allocated for process memory management.
+    InfoType_SystemResourceSizeUsed         = 17, ///< [3.0.0+] Amount of memory currently used by process memory management.
+    InfoType_ProgramId                      = 18, ///< [3.0.0+] Program ID for the process.
+    InfoType_InitialProcessIdRange          = 19, ///< [4.0.0-4.1.0] Min/max initial process IDs.
+    InfoType_UserExceptionContextAddress    = 20, ///< [5.0.0+] Address of the process's exception context (for break).
+    InfoType_TotalNonSystemMemorySize       = 21, ///< [6.0.0+] Total amount of memory available for process, excluding that for process memory management.
+    InfoType_UsedNonSystemMemorySize        = 22, ///< [6.0.0+] Amount of memory used by process, excluding that for process memory management.
+
+    InfoType_ThreadTickCount                = 0xF0000002, ///< Number of ticks spent on thread.
+} InfoType;
+
+/// GetSystemInfo IDs.
+typedef enum {
+    SystemInfoType_TotalPhysicalMemorySize  = 0, ///< Total amount of DRAM available to system.
+    SystemInfoType_UsedPhysicalMemorySize   = 1, ///< Current amount of DRAM used by system.
+    SystemInfoType_InitialProcessIdRange    = 2, ///< Min/max initial process IDs.
+} SystemInfoType;
+
+/// GetInfo Idle/Thread Tick Count Sub IDs.
+typedef enum {
+    TickCountInfo_Core0 = 0,       ///< Tick count on core 0.
+    TickCountInfo_Core1 = 1,       ///< Tick count on core 1.
+    TickCountInfo_Core2 = 2,       ///< Tick count on core 2.
+    TickCountInfo_Core3 = 3,       ///< Tick count on core 3.
+
+    TickCountInfo_Total = U64_MAX, ///< Tick count on all cores.
+} TickCountInfo;
+
+/// GetInfo InitialProcessIdRange Sub IDs.
+typedef enum {
+    InitialProcessIdRangeInfo_Minimum = 0, ///< Lowest initial process ID.
+    InitialProcessIdRangeInfo_Maximum = 1, ///< Highest initial process ID.
+} InitialProcessIdRangeInfo;
+
+/// GetSystemInfo PhysicalMemory Sub IDs.
+typedef enum {
+    PhysicalMemoryInfo_Application  = 0, ///< Memory allocated for application usage.
+    PhysicalMemoryInfo_Applet       = 1, ///< Memory allocated for applet usage.
+    PhysicalMemoryInfo_System       = 2, ///< Memory allocated for system usage.
+    PhysicalMemoryInfo_SystemUnsafe = 3, ///< Memory allocated for unsafe system usage (accessible to devices).
+} PhysicalMemoryInfo;
+
 ///@name Memory management
 ///@{
 
@@ -533,7 +593,7 @@ void NORETURN svcReturnFromException(Result res);
  * @remark The full list of property IDs can be found on the <a href="https://switchbrew.org/wiki/SVC#svcGetInfo">switchbrew.org wiki</a>.
  * @note Syscall number 0x29.
  */
-Result svcGetInfo(u64* out, u64 id0, Handle handle, u64 id1);
+Result svcGetInfo(u64* out, u32 id0, Handle handle, u64 id1);
 
 ///@}
 
@@ -868,7 +928,7 @@ Result svcGetDebugEvent(u8* event_out, Handle debug);
  * @return Result code.
  * @note Syscall number 0x64.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
- * @warning Only exists on 3.0.0+. For older versions use \ref svcLegacyContinueDebugEvent.
+ * @warning Only exists on [3.0.0+]. For older versions use \ref svcLegacyContinueDebugEvent.
  */
 Result svcContinueDebugEvent(Handle debug, u32 flags, u64* tid_list, u32 num_tids);
 
@@ -877,7 +937,7 @@ Result svcContinueDebugEvent(Handle debug, u32 flags, u64* tid_list, u32 num_tid
  * @return Result code.
  * @note Syscall number 0x64.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
- * @warning Only exists on 1.0.0-2.3.0. For newer versions use \ref svcContinueDebugEvent.
+ * @warning Only exists on [1.0.0-2.3.0]. For newer versions use \ref svcContinueDebugEvent.
  */
 Result svcLegacyContinueDebugEvent(Handle debug, u32 flags, u64 threadID);
 
@@ -1057,6 +1117,18 @@ Result svcMapProcessMemory(void* dst, Handle proc, u64 src, u64 size);
 Result svcUnmapProcessMemory(void* dst, Handle proc, u64 src, u64 size);
 
 /**
+ * @brief Equivalent to \ref svcQueryMemory, for another process.
+ * @param[out] meminfo_ptr \ref MemoryInfo structure which will be filled in.
+ * @param[out] pageinfo Page information which will be filled in.
+ * @param[in] proc Process handle.
+ * @param[in] addr Address to query.
+ * @return Result code.
+ * @note Syscall number 0x76.
+ * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
+ */
+Result svcQueryProcessMemory(MemoryInfo* meminfo_ptr, u32 *pageinfo, Handle proc, u64 addr);
+
+/**
  * @brief Maps normal heap in a certain process as executable code (used when loading NROs).
  * @param[in] proc Process handle (cannot be \ref CUR_PROCESS_HANDLE).
  * @param[in] dst Destination mapping address.
@@ -1091,7 +1163,7 @@ Result svcUnmapProcessCodeMemory(Handle proc, u64 dst, u64 src, u64 size);
  * @note Syscall number 0x79.
  * @warning This is a privileged syscall. Use \ref envIsSyscallHinted to check if it is available.
  */
-Result svcCreateProcess(Handle* out, void* proc_info, u32* caps, u64 cap_num);
+Result svcCreateProcess(Handle* out, const void* proc_info, const u32* caps, u64 cap_num);
 
 /**
  * @brief Starts executing a freshly created process.

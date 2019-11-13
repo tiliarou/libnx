@@ -1,1098 +1,613 @@
 // Copyright 2017 plutoo
 #include <string.h>
-#include "types.h"
-#include "result.h"
-#include "arm/atomics.h"
-#include "kernel/ipc.h"
+#include "service_guard.h"
+#include "sf/sessionmgr.h"
 #include "runtime/hosversion.h"
 #include "services/fs.h"
-#include "services/sm.h"
+
+__attribute__((weak)) u32 __nx_fs_num_sessions = 3;
 
 static Service g_fsSrv;
-static u64 g_refCnt;
+static SessionMgr g_fsSessionMgr;
 
-Result fsInitialize(void)
+static __thread u32 g_fsPriority = FsPriority_Normal;
+
+NX_INLINE bool _fsObjectIsChild(Service* s)
 {
-    atomicIncrement64(&g_refCnt);
+    return s->session == g_fsSrv.session;
+}
 
-    if (serviceIsActive(&g_fsSrv))
-        return 0;
+static void _fsObjectClose(Service* s)
+{
+    if (!_fsObjectIsChild(s)) {
+        serviceClose(s);
+    }
+    else {
+        int slot = sessionmgrAttachClient(&g_fsSessionMgr);
+        uint32_t object_id = serviceGetObjectId(s);
+        serviceAssumeDomain(s);
+        cmifMakeCloseRequest(armGetTls(), object_id);
+        svcSendSyncRequest(sessionmgrGetClientSession(&g_fsSessionMgr, slot));
+        sessionmgrDetachClient(&g_fsSessionMgr, slot);
+    }
+}
 
-    Result rc = smGetService(&g_fsSrv, "fsp-srv");
-    
-    if (R_SUCCEEDED(rc)) {
-        rc = serviceConvertToDomain(&g_fsSrv);
+NX_INLINE Result _fsObjectDispatchImpl(
+    Service* s, u32 request_id,
+    const void* in_data, u32 in_data_size,
+    void* out_data, u32 out_data_size,
+    SfDispatchParams disp
+) {
+    int slot = -1;
+    if (_fsObjectIsChild(s)) {
+        slot = sessionmgrAttachClient(&g_fsSessionMgr);
+        if (slot < 0) __builtin_unreachable();
+        disp.target_session = sessionmgrGetClientSession(&g_fsSessionMgr, slot);
+        serviceAssumeDomain(s);
     }
 
-    if (R_SUCCEEDED(rc)) {
-        IpcCommand c;
-        ipcInitialize(&c);
-        ipcSendPid(&c);
+    disp.context = g_fsPriority;
+    Result rc = serviceDispatchImpl(s, request_id, in_data, in_data_size, out_data, out_data_size, disp);
 
-        struct {
-            u64 magic;
-            u64 cmd_id;
-            u64 unk;
-        } *raw;
-
-        raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-        raw->magic = SFCI_MAGIC;
-        raw->cmd_id = 1;
-        raw->unk = 0;
-
-        rc = serviceIpcDispatch(&g_fsSrv);
-
-        if (R_SUCCEEDED(rc)) {
-            IpcParsedCommand r;
-            struct {
-                u64 magic;
-                u64 result;
-            } *resp;
-
-            serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-            resp = r.Raw;
-
-            rc = resp->result;
-        }
+    if (slot >= 0) {
+        sessionmgrDetachClient(&g_fsSessionMgr, slot);
     }
 
     return rc;
 }
 
-void fsExit(void)
-{
-    if (atomicDecrement64(&g_refCnt) == 0)
-        serviceClose(&g_fsSrv);
+#define _fsObjectDispatch(_s,_rid,...) \
+    _fsObjectDispatchImpl((_s),(_rid),NULL,0,NULL,0,(SfDispatchParams){ __VA_ARGS__ })
+
+#define _fsObjectDispatchIn(_s,_rid,_in,...) \
+    _fsObjectDispatchImpl((_s),(_rid),&(_in),sizeof(_in),NULL,0,(SfDispatchParams){ __VA_ARGS__ })
+
+#define _fsObjectDispatchOut(_s,_rid,_out,...) \
+    _fsObjectDispatchImpl((_s),(_rid),NULL,0,&(_out),sizeof(_out),(SfDispatchParams){ __VA_ARGS__ })
+
+#define _fsObjectDispatchInOut(_s,_rid,_in,_out,...) \
+    _fsObjectDispatchImpl((_s),(_rid),&(_in),sizeof(_in),&(_out),sizeof(_out),(SfDispatchParams){ __VA_ARGS__ })
+
+NX_GENERATE_SERVICE_GUARD(fs);
+
+Result _fsInitialize(void) {
+    Result rc = smGetService(&g_fsSrv, "fsp-srv");
+
+    if (R_SUCCEEDED(rc)) {
+        rc = serviceConvertToDomain(&g_fsSrv);
+    }
+
+    if (R_SUCCEEDED(rc)) {
+        u64 pid_placeholder = 0;
+        serviceAssumeDomain(&g_fsSrv);
+        rc = serviceDispatchIn(&g_fsSrv, 1, pid_placeholder, .in_send_pid = true);
+    }
+
+    if (R_SUCCEEDED(rc))
+        rc = sessionmgrCreate(&g_fsSessionMgr, g_fsSrv.session, __nx_fs_num_sessions);
+
+    return rc;
+}
+
+void _fsCleanup(void) {
+    // Close extra sessions
+    sessionmgrClose(&g_fsSessionMgr);
+
+    // We can't assume g_fsSrv is a domain here because serviceConvertToDomain might have failed
+    serviceClose(&g_fsSrv);
 }
 
 Service* fsGetServiceSession(void) {
     return &g_fsSrv;
 }
 
-Result fsOpenBisStorage(FsStorage* out, u32 PartitionId) {
-    IpcCommand c;
-    ipcInitialize(&c);
+void fsSetPriority(FsPriority prio) {
+    if (hosversionAtLeast(5,0,0))
+        g_fsPriority = prio;
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 PartitionId;
-    } *raw;
+static Result _fsCmdGetSession(Service* srv, Service* srv_out, u32 cmd_id) {
+    return _fsObjectDispatch(srv, cmd_id,
+        .out_num_objects = 1,
+        .out_objects = srv_out,
+    );
+}
 
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
+static Result _fsCmdNoIO(Service* srv, u32 cmd_id) {
+    return _fsObjectDispatch(srv, cmd_id);
+}
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 12;
-    raw->PartitionId = PartitionId;
+static Result _fsCmdNoInOutU8(Service* srv, u8 *out, u32 cmd_id) {
+    return _fsObjectDispatchOut(srv, cmd_id, *out);
+}
 
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
+static Result _fsCmdNoInOutBool(Service* srv, bool *out, u32 cmd_id) {
+    u8 tmp=0;
+    Result rc = _fsCmdNoInOutU8(srv, &tmp, cmd_id);
+    if (R_SUCCEEDED(rc) && out) *out = tmp & 1;
     return rc;
 }
 
-Result fsOpenBisFileSystem(FsFileSystem* out, u32 PartitionId, const char* string) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    char tmpstr[FS_MAX_PATH] = {0};
-    strncpy(tmpstr, string, sizeof(tmpstr)-1);
-    ipcAddSendStatic(&c, tmpstr, sizeof(tmpstr), 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 PartitionId;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 11;
-    raw->PartitionId = PartitionId;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsMountSdcard(FsFileSystem* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 18;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsMountSaveData(FsFileSystem* out, u8 inval, FsSave *save) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 inval;//Actually u8.
-        FsSave save;
-    } PACKED *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 51;
-    raw->inval = (u64)inval;
-    memcpy(&raw->save, save, sizeof(FsSave));
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsMountSystemSaveData(FsFileSystem* out, u8 inval, FsSave *save) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 inval;//Actually u8.
-        FsSave save;
-    } PACKED *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 52;
-    raw->inval = (u64)inval;
-    memcpy(&raw->save, save, sizeof(FsSave));
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsOpenSaveDataIterator(FsSaveDataIterator* out, s32 SaveDataSpaceId) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u8 SaveDataSpaceId;
-    } *raw2;
-
-    if (SaveDataSpaceId == FsSaveDataSpaceId_All) {
-        raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-        raw->magic = SFCI_MAGIC;
-        raw->cmd_id = 60;
-    }
-    else {
-        raw2 = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw2));
-
-        raw2->magic = SFCI_MAGIC;
-        raw2->cmd_id = 61;
-        raw2->SaveDataSpaceId = SaveDataSpaceId;
-    }
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsOpenDataStorageByCurrentProcess(FsStorage* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 200;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsOpenDeviceOperator(FsDeviceOperator* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 400;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsOpenSdCardDetectionEventNotifier(FsEventNotifier* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 500;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
-    }
-
-    return rc;
-}
-
-Result fsIsExFatSupported(bool* out)
-{
-    if (hosversionBefore(2,0,0)) {
-        *out = false;
-        return 0;
-    }
-
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 27;
-
-    Result rc = serviceIpcDispatch(&g_fsSrv);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u8  exfat;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->exfat;
-        }
-    }
-
-    return rc;
-}
-
-// Wrapper(s) for fsMountSaveData.
-Result fsMount_SaveData(FsFileSystem* out, u64 titleID, u128 userID) {
-    FsSave save;
-
-    memset(&save, 0, sizeof(save));
-    save.titleID = titleID;
-    save.userID = userID;
-    save.SaveDataType = FsSaveDataType_SaveData;
-
-    return fsMountSaveData(out, FsSaveDataSpaceId_NandUser, &save);
-}
-
-Result fsMount_SystemSaveData(FsFileSystem* out, u64 saveID) {
-    FsSave save;
-
-    memset(&save, 0, sizeof(save));
-    save.saveID = saveID;
-    save.SaveDataType = FsSaveDataType_SystemSaveData;
-
-    return fsMountSystemSaveData(out, FsSaveDataSpaceId_NandSystem, &save);
-}
+//-----------------------------------------------------------------------------
+// IFileSystemProxy
+//-----------------------------------------------------------------------------
 
 Result fsOpenFileSystem(FsFileSystem* out, FsFileSystemType fsType, const char* contentPath) {
     return fsOpenFileSystemWithId(out, 0, fsType, contentPath);
 }
 
-Result fsOpenFileSystemWithId(FsFileSystem* out, u64 titleId, FsFileSystemType fsType, const char* contentPath) {
+static Result _fsOpenFileSystem(FsFileSystem* out, FsFileSystemType fsType, const char* contentPath) {
+    u32 tmp=fsType;
+    return _fsObjectDispatchIn(&g_fsSrv, 0, tmp,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { contentPath, FS_MAX_PATH } },
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenFileSystemWithPatch(FsFileSystem* out, u64 id, FsFileSystemType fsType) {
+    if (hosversionBefore(2,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    const struct {
+        u32 fsType;
+        u64 id;
+    } in = { fsType, id };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 7, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+static Result _fsOpenFileSystemWithId(FsFileSystem* out, u64 id, FsFileSystemType fsType, const char* contentPath) {
+    const struct {
+        u32 fsType;
+        u64 id;
+    } in = { fsType, id };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 8, in,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { contentPath, FS_MAX_PATH } },
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenFileSystemWithId(FsFileSystem* out, u64 id, FsFileSystemType fsType, const char* contentPath) {
     char sendStr[FS_MAX_PATH] = {0};
     strncpy(sendStr, contentPath, sizeof(sendStr)-1);
 
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, sendStr, sizeof(sendStr), 0);
+    if (hosversionAtLeast(2,0,0))
+        return _fsOpenFileSystemWithId(out, id, fsType, sendStr);
+    else
+        return _fsOpenFileSystem(out, fsType, sendStr);
+}
 
-    if (hosversionAtLeast(2,0,0)) {
-        struct {
-            u64 magic;
-            u64 cmd_id;
-            u32 fsType;
-            u64 titleId;
-        } *raw;
-    
-        raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-    
-        raw->magic = SFCI_MAGIC;
-        raw->cmd_id = 8;
-        raw->fsType = fsType;
-        raw->titleId = titleId;
-    }
-    else {
-        struct {
-            u64 magic;
-            u64 cmd_id;
-            u32 fsType;
-        } *raw;
-    
-        raw = serviceIpcPrepareHeader(&g_fsSrv, &c, sizeof(*raw));
-    
-        raw->magic = SFCI_MAGIC;
-        raw->cmd_id = 0;
-        raw->fsType = fsType;
+Result fsOpenBisFileSystem(FsFileSystem* out, FsBisStorageId partitionId, const char* string) {
+    char tmpstr[FS_MAX_PATH] = {0};
+    strncpy(tmpstr, string, sizeof(tmpstr)-1);
+
+    u32 tmp=partitionId;
+    return _fsObjectDispatchIn(&g_fsSrv, 11, tmp,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { tmpstr, sizeof(tmpstr) } },
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenBisStorage(FsStorage* out, FsBisStorageId partitionId) {
+    u32 tmp=partitionId;
+    return _fsObjectDispatchIn(&g_fsSrv, 12, tmp,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenSdCardFileSystem(FsFileSystem* out) {
+    return _fsCmdGetSession(&g_fsSrv, &out->s, 18);
+}
+
+Result fsCreateSaveDataFileSystemBySystemSaveDataId(const FsSave* save, const FsSaveCreate* create) {
+    const struct {
+        FsSave save;
+        FsSaveCreate create;
+    } in = { *save, *create };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 23, in);
+}
+
+Result fsDeleteSaveDataFileSystemBySaveDataSpaceId(FsSaveDataSpaceId saveDataSpaceId, u64 saveID) {
+    if (hosversionBefore(2,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    const struct {
+        u8 saveDataSpaceId;
+        u64 saveID;
+    } in = { (u8)saveDataSpaceId, saveID };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 25, in);
+}
+
+Result fsIsExFatSupported(bool* out) {
+    if (hosversionBefore(2,0,0)) {
+        *out = false;
+        return 0;
     }
 
-    Result rc = serviceIpcDispatch(&g_fsSrv);
+    return _fsCmdNoInOutBool(&g_fsSrv, out, 27);
+}
+
+Result fsOpenGameCardFileSystem(FsFileSystem* out, const FsGameCardHandle* handle, FsGameCardPartiton partition) {
+    const struct {
+        FsGameCardHandle handle;
+        u32 partition;
+    } in = { *handle, partition };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 31, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsExtendSaveDataFileSystem(FsSaveDataSpaceId saveDataSpaceId, u64 saveID, s64 dataSize, s64 journalSize) {
+    if (hosversionBefore(3,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    const struct {
+        u8 saveDataSpaceId;
+        u8 pad[7];
+        u64 saveID;
+        s64 dataSize;
+        s64 journalSize;
+    } in = { (u8)saveDataSpaceId, {0}, saveID, dataSize, journalSize };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 32, in);
+}
+
+Result fsOpenSaveDataFileSystem(FsFileSystem* out, FsSaveDataSpaceId saveDataSpaceId, const FsSave *save) {
+    const struct {
+        u8 saveDataSpaceId;
+        u8 pad[7];
+        FsSave save;
+    } in = { (u8)saveDataSpaceId, {0}, *save };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 51, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenSaveDataFileSystemBySystemSaveDataId(FsFileSystem* out, FsSaveDataSpaceId saveDataSpaceId, const FsSave *save) {
+    const struct {
+        u8 saveDataSpaceId;
+        u8 pad[7];
+        FsSave save;
+    } in = { (u8)saveDataSpaceId, {0}, *save };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 52, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsReadSaveDataFileSystemExtraDataBySaveDataSpaceId(void* buf, size_t len, FsSaveDataSpaceId saveDataSpaceId, u64 saveID) {
+    if (hosversionBefore(3,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    const struct {
+        u8 saveDataSpaceId;
+        u64 saveID;
+    } in = { (u8)saveDataSpaceId, saveID };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 57, in,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
+        .buffers = { { buf, len } },
+    );
+}
+
+Result fsReadSaveDataFileSystemExtraData(void* buf, size_t len, u64 saveID) {
+    return _fsObjectDispatchIn(&g_fsSrv, 58, saveID,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
+        .buffers = { { buf, len } },
+    );
+}
+
+Result fsWriteSaveDataFileSystemExtraData(const void* buf, size_t len, FsSaveDataSpaceId saveDataSpaceId, u64 saveID) {
+    if (hosversionBefore(2,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    const struct {
+        u8 saveDataSpaceId;
+        u64 saveID;
+    } in = { (u8)saveDataSpaceId, saveID };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 59, in,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_In },
+        .buffers = { { buf, len } },
+    );
+}
+
+static Result _fsOpenSaveDataInfoReader(FsSaveDataInfoReader* out) {
+    return _fsCmdGetSession(&g_fsSrv, &out->s, 60);
+}
+
+static Result _fsOpenSaveDataInfoReaderBySaveDataSpaceId(FsSaveDataInfoReader* out, FsSaveDataSpaceId saveDataSpaceId) {
+    u8 in = (u8)saveDataSpaceId;
+    return _fsObjectDispatchIn(&g_fsSrv, 61, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+
+}
+
+Result fsOpenSaveDataInfoReader(FsSaveDataInfoReader* out, FsSaveDataSpaceId saveDataSpaceId) {
+    if (saveDataSpaceId == FsSaveDataSpaceId_All) {
+        return _fsOpenSaveDataInfoReader(out);
+    } else {
+        return _fsOpenSaveDataInfoReaderBySaveDataSpaceId(out, saveDataSpaceId);
+    }
+}
+
+Result fsOpenContentStorageFileSystem(FsFileSystem* out, FsContentStorageId content_storage_id) {
+    u32 tmp=content_storage_id;
+    return _fsObjectDispatchIn(&g_fsSrv, 110, tmp,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenCustomStorageFileSystem(FsFileSystem* out, FsCustomStorageId custom_storage_id) {
+    if (hosversionBefore(7,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    u32 tmp=custom_storage_id;
+    return _fsObjectDispatchIn(&g_fsSrv, 130, tmp,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenDataStorageByCurrentProcess(FsStorage* out) {
+    return _fsCmdGetSession(&g_fsSrv, &out->s, 200);
+}
+
+Result fsOpenDataStorageByDataId(FsStorage* out, u64 dataId, NcmStorageId storageId) {
+    const struct {
+        u8 storage_id;
+        u64 data_id;
+    } in = { storageId, dataId };
+
+    return _fsObjectDispatchIn(&g_fsSrv, 202, in,
+        .out_num_objects = 1,
+        .out_objects = &out->s,
+    );
+}
+
+Result fsOpenDeviceOperator(FsDeviceOperator* out) {
+    return _fsCmdGetSession(&g_fsSrv, &out->s, 400);
+}
+
+Result fsOpenSdCardDetectionEventNotifier(FsEventNotifier* out) {
+    return _fsCmdGetSession(&g_fsSrv, &out->s, 500);
+}
+
+Result fsGetRightsIdByPath(const char* path, FsRightsId* out_rights_id) {
+    if (hosversionBefore(2,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    char send_path[FS_MAX_PATH] = {0};
+    strncpy(send_path, path, FS_MAX_PATH-1);
+
+    return _fsObjectDispatchOut(&g_fsSrv, 609, *out_rights_id,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { send_path, sizeof(send_path) } },
+    );
+}
+
+Result fsGetRightsIdAndKeyGenerationByPath(const char* path, u8* out_key_generation, FsRightsId* out_rights_id) {
+    if (hosversionBefore(3,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
+
+    char send_path[FS_MAX_PATH] = {0};
+    strncpy(send_path, path, FS_MAX_PATH-1);
+
+    struct {
+        u8 key_generation;
+        u8 padding[0x7];
+        FsRightsId rights_id;
+    } out;
+
+    Result rc = _fsObjectDispatchOut(&g_fsSrv, 610, out,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { send_path, sizeof(send_path) } },
+    );
 
     if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&g_fsSrv, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &g_fsSrv, &r, 0);
-        }
+        if (out_key_generation) *out_key_generation = out.key_generation;
+        if (out_rights_id) *out_rights_id = out.rights_id;
     }
 
     return rc;
 }
 
-// IFileSystem impl
-Result fsFsCreateFile(FsFileSystem* fs, const char* path, size_t size, int flags) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
+Result fsDisableAutoSaveDataCreation(void) {
+    return _fsCmdNoIO(&g_fsSrv, 1003);
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 zero;
+Result fsSetGlobalAccessLogMode(u32 mode) {
+    return _fsObjectDispatchIn(&g_fsSrv, 1004, mode);
+}
+
+Result fsGetGlobalAccessLogMode(u32* out_mode) {
+    return _fsObjectDispatchOut(&g_fsSrv, 1005, *out_mode);
+}
+
+// Wrapper(s) for fsCreateSaveDataFileSystemBySystemSaveDataId.
+Result fsCreate_SystemSaveDataWithOwner(FsSaveDataSpaceId saveDataSpaceId, u64 saveID, AccountUid uid, u64 ownerId, u64 size, u64 journalSize, u32 flags) {
+    FsSave save = {
+        .uid = uid,
+        .saveID = saveID,
+    };
+    FsSaveCreate create = {
+        .size = size,
+        .journalSize = journalSize,
+        .blockSize = 0x4000,
+        .ownerId = ownerId,
+        .flags = flags,
+        .saveDataSpaceId = saveDataSpaceId,
+    };
+
+    return fsCreateSaveDataFileSystemBySystemSaveDataId(&save, &create);
+}
+
+Result fsCreate_SystemSaveData(FsSaveDataSpaceId saveDataSpaceId, u64 saveID, u64 size, u64 journalSize, u32 flags) {
+    return fsCreate_SystemSaveDataWithOwner(saveDataSpaceId, saveID, (AccountUid){}, 0, size, journalSize, flags);
+}
+
+// Wrapper(s) for fsOpenSaveDataFileSystem.
+Result fsOpen_SaveData(FsFileSystem* out, u64 program_id, AccountUid uid) {
+    FsSave save;
+
+    memset(&save, 0, sizeof(save));
+    save.program_id = program_id;
+    save.uid = uid;
+    save.saveDataType = FsSaveDataType_SaveData;
+
+    return fsOpenSaveDataFileSystem(out, FsSaveDataSpaceId_NandUser, &save);
+}
+
+Result fsOpen_SystemSaveData(FsFileSystem* out, FsSaveDataSpaceId saveDataSpaceId, u64 saveID, AccountUid uid) {
+    FsSave save;
+
+    memset(&save, 0, sizeof(save));
+    save.uid = uid;
+    save.saveID = saveID;
+    save.saveDataType = FsSaveDataType_SystemSaveData;
+
+    return fsOpenSaveDataFileSystemBySystemSaveDataId(out, saveDataSpaceId, &save);
+}
+
+//-----------------------------------------------------------------------------
+// IFileSystem
+//-----------------------------------------------------------------------------
+
+Result fsFsCreateFile(FsFileSystem* fs, const char* path, u64 size, u32 option) {
+    const struct {
+        u32 option;
         u64 size;
-        u32 flags;
-    } *raw;
+    } in = { option, size };
 
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
+    return _fsObjectDispatchIn(&fs->s, 0, in,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+    );
+}
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->zero = 0;
-    raw->size = size;
-    raw->flags = flags;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+static Result _fsFsCmdWithInPath(FsFileSystem* fs, const char* path, u32 cmd_id) {
+    return _fsObjectDispatch(&fs->s, cmd_id,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+    );
 }
 
 Result fsFsDeleteFile(FsFileSystem* fs, const char* path) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 1;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsFsCmdWithInPath(fs, path, 1);
 }
 
 Result fsFsCreateDirectory(FsFileSystem* fs, const char* path) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 2;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsFsCmdWithInPath(fs, path, 2);
 }
 
 Result fsFsDeleteDirectory(FsFileSystem* fs, const char* path) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 3;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsFsCmdWithInPath(fs, path, 3);
 }
 
 Result fsFsDeleteDirectoryRecursively(FsFileSystem* fs, const char* path) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 4;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsFsCmdWithInPath(fs, path, 4);
 }
 
-Result fsFsRenameFile(FsFileSystem* fs, const char* path0, const char* path1) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path0, FS_MAX_PATH, 0);
-    ipcAddSendStatic(&c, path1, FS_MAX_PATH, 1);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 5;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+static Result _fsFsCmdWithTwoInPaths(FsFileSystem* fs, const char* cur_path, const char* new_path, u32 cmd_id) {
+    return _fsObjectDispatch(&fs->s, cmd_id,
+        .buffer_attrs = {
+            SfBufferAttr_HipcPointer | SfBufferAttr_In,
+            SfBufferAttr_HipcPointer | SfBufferAttr_In,
+        },
+        .buffers = {
+            { cur_path, FS_MAX_PATH },
+            { new_path, FS_MAX_PATH },
+        },
+    );
 }
 
-Result fsFsRenameDirectory(FsFileSystem* fs, const char* path0, const char* path1) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path0, FS_MAX_PATH, 0);
-    ipcAddSendStatic(&c, path1, FS_MAX_PATH, 1);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 6;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+Result fsFsRenameFile(FsFileSystem* fs, const char* cur_path, const char* new_path) {
+    return _fsFsCmdWithTwoInPaths(fs, cur_path, new_path, 5);
 }
 
-Result fsFsGetEntryType(FsFileSystem* fs, const char* path, FsEntryType* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 7;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u32 type;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->type;
-        }
-    }
-
-    return rc;
+Result fsFsRenameDirectory(FsFileSystem* fs, const char* cur_path, const char* new_path) {
+    return _fsFsCmdWithTwoInPaths(fs, cur_path, new_path, 6);
 }
 
-Result fsFsOpenFile(FsFileSystem* fs, const char* path, int flags, FsFile* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 flags;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 8;
-    raw->flags = flags;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &fs->s, &r, 0);
-        }
-    }
-
-    return rc;
+Result fsFsGetEntryType(FsFileSystem* fs, const char* path, FsDirEntryType* out) {
+    return _fsObjectDispatchOut(&fs->s, 7, *out,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+    );
 }
 
-Result fsFsOpenDirectory(FsFileSystem* fs, const char* path, int flags, FsDir* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
+static Result _fsFsOpenCommon(FsFileSystem* fs, const char* path, u32 flags, Service* out, u32 cmd_id) {
+    return _fsObjectDispatchIn(&fs->s, cmd_id, flags,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+        .out_num_objects = 1,
+        .out_objects = out,
+    );
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 flags;
-    } *raw;
+Result fsFsOpenFile(FsFileSystem* fs, const char* path, u32 mode, FsFile* out) {
+    return _fsFsOpenCommon(fs, path, mode, &out->s, 8);
+}
 
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 9;
-    raw->flags = flags;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            serviceCreateSubservice(&out->s, &fs->s, &r, 0);
-        }
-    }
-
-    return rc;
+Result fsFsOpenDirectory(FsFileSystem* fs, const char* path, u32 mode, FsDir* out) {
+    return _fsFsOpenCommon(fs, path, mode, &out->s, 9);
 }
 
 Result fsFsCommit(FsFileSystem* fs) {
-    IpcCommand c;
-    ipcInitialize(&c);
+    return _fsCmdNoIO(&fs->s, 10);
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 10;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+static Result _fsFsCmdWithInPathAndOutU64(FsFileSystem* fs, const char* path, u64* out, u32 cmd_id) {
+    return _fsObjectDispatchOut(&fs->s, cmd_id, *out,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+    );
 }
 
 Result fsFsGetFreeSpace(FsFileSystem* fs, const char* path, u64* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 11;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 space;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->space;
-        }
-    }
-
-    return rc;
+    return _fsFsCmdWithInPathAndOutU64(fs, path, out, 11);
 }
 
 Result fsFsGetTotalSpace(FsFileSystem* fs, const char* path, u64* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 12;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 space;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->space;
-        }
-    }
-
-    return rc;
+    return _fsFsCmdWithInPathAndOutU64(fs, path, out, 12);
 }
 
 Result fsFsCleanDirectoryRecursively(FsFileSystem* fs, const char* path) {
     if (hosversionBefore(3,0,0))
         return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
 
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, path, FS_MAX_PATH, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 13;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsFsCmdWithInPath(fs, path, 13);
 }
 
 Result fsFsGetFileTimeStampRaw(FsFileSystem* fs, const char* path, FsTimeStampRaw *out) {
     if (hosversionBefore(3,0,0))
         return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
 
-    char send_path[FS_MAX_PATH] = {0};
-    strncpy(send_path, path, sizeof(send_path)-1);
-
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, send_path, sizeof(send_path), 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 14;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            FsTimeStampRaw out;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc) && out) *out = resp->out;
-    }
-
-    return rc;
+    return _fsObjectDispatchOut(&fs->s, 14, *out,
+        .buffer_attrs = { SfBufferAttr_HipcPointer | SfBufferAttr_In },
+        .buffers = { { path, FS_MAX_PATH } },
+    );
 }
 
 Result fsFsQueryEntry(FsFileSystem* fs, void *out, size_t out_size, const void *in, size_t in_size, const char* path, FsFileSystemQueryType query_type) {
@@ -1102,40 +617,18 @@ Result fsFsQueryEntry(FsFileSystem* fs, void *out, size_t out_size, const void *
     char send_path[FS_MAX_PATH] = {0};
     strncpy(send_path, path, sizeof(send_path)-1);
 
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendStatic(&c, send_path, sizeof(send_path), 0);
-    ipcAddSendBuffer(&c, in, in_size, BufferType_Type1);
-    ipcAddRecvBuffer(&c, out, out_size, BufferType_Type1);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 query_type;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&fs->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 15;
-    raw->query_type = query_type;
-
-    Result rc = serviceIpcDispatch(&fs->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&fs->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&fs->s, 15, query_type,
+        .buffer_attrs = {
+            SfBufferAttr_HipcPointer  | SfBufferAttr_In,
+            SfBufferAttr_HipcMapAlias | SfBufferAttr_In  | SfBufferAttr_HipcMapTransferAllowsNonSecure,
+            SfBufferAttr_HipcMapAlias | SfBufferAttr_Out | SfBufferAttr_HipcMapTransferAllowsNonSecure,
+        },
+        .buffers = {
+            { send_path, sizeof(send_path) },
+            { in,        in_size           },
+            { out,       out_size          },
+        },
+    );
 }
 
 Result fsFsSetArchiveBit(FsFileSystem* fs, const char *path) {
@@ -1143,661 +636,202 @@ Result fsFsSetArchiveBit(FsFileSystem* fs, const char *path) {
 }
 
 void fsFsClose(FsFileSystem* fs) {
-    serviceClose(&fs->s);
+    _fsObjectClose(&fs->s);
 }
 
-// IFile implementation
-Result fsFileRead(FsFile* f, u64 off, void* buf, size_t len, size_t* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddRecvBuffer(&c, buf, len, 1);
+//-----------------------------------------------------------------------------
+// IFile
+//-----------------------------------------------------------------------------
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 zero;
+Result fsFileRead(FsFile* f, u64 off, void* buf, u64 read_size, u32 option, u64* bytes_read) {
+    const struct {
+        u32 option;
+        u32 pad;
         u64 offset;
         u64 read_size;
-    } *raw;
+    } in = { option, 0, off, read_size };
 
-    raw = serviceIpcPrepareHeader(&f->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->zero = 0;
-    raw->offset = off;
-    raw->read_size = len;
-
-    Result rc = serviceIpcDispatch(&f->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 bytes_read;
-        } *resp;
-
-        serviceIpcParse(&f->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->bytes_read;
-        }
-    }
-
-    return rc;
+    return _fsObjectDispatchInOut(&f->s, 0, in, *bytes_read,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out | SfBufferAttr_HipcMapTransferAllowsNonSecure },
+        .buffers = { { buf, read_size } },
+    );
 }
 
-Result fsFileWrite(FsFile* f, u64 off, const void* buf, size_t len) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendBuffer(&c, buf, len, 1);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 zero;
+Result fsFileWrite(FsFile* f, u64 off, const void* buf, u64 write_size, u32 option) {
+    const struct {
+        u32 option;
+        u32 pad;
         u64 offset;
         u64 write_size;
-    } *raw;
+    } in = { option, 0, off, write_size };
 
-    raw = serviceIpcPrepareHeader(&f->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 1;
-    raw->zero = 0;
-    raw->offset = off;
-    raw->write_size = len;
-
-    Result rc = serviceIpcDispatch(&f->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&f->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&f->s, 1, in,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_In | SfBufferAttr_HipcMapTransferAllowsNonSecure },
+        .buffers = { { buf, write_size } },
+    );
 }
 
 Result fsFileFlush(FsFile* f) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&f->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 2;
-
-    Result rc = serviceIpcDispatch(&f->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&f->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsCmdNoIO(&f->s, 2);
 }
 
 Result fsFileSetSize(FsFile* f, u64 sz) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 size;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&f->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 3;
-    raw->size = sz;
-
-    Result rc = serviceIpcDispatch(&f->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&f->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&f->s, 3, sz);
 }
 
 Result fsFileGetSize(FsFile* f, u64* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
+    return _fsObjectDispatchOut(&f->s, 4, *out);
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
+Result fsFileOperateRange(FsFile* f, FsOperationId op_id, u64 off, u64 len, FsRangeInfo* out) {
+    if (hosversionBefore(4,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
 
-    raw = serviceIpcPrepareHeader(&f->s, &c, sizeof(*raw));
+    const struct {
+        u32 op_id;
+        u32 pad;
+        u64 off;
+        u64 len;
+    } in = { op_id, 0, off, len };
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 4;
-
-    Result rc = serviceIpcDispatch(&f->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 size;
-        } *resp;
-
-        serviceIpcParse(&f->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-        if (R_SUCCEEDED(rc) && out) *out = resp->size;
-    }
-
-    return rc;
+    return _fsObjectDispatchInOut(&f->s, 5, in, *out);
 }
 
 void fsFileClose(FsFile* f) {
-    serviceClose(&f->s);
+    _fsObjectClose(&f->s);
 }
 
 // IDirectory implementation
 void fsDirClose(FsDir* d) {
-    serviceClose(&d->s);
+    _fsObjectClose(&d->s);
 }
 
-Result fsDirRead(FsDir* d, u64 inval, size_t* total_entries, size_t max_entries, FsDirectoryEntry *buf) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddRecvBuffer(&c, buf, sizeof(FsDirectoryEntry)*max_entries, 0);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 inval;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&d->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->inval = inval;
-
-    Result rc = serviceIpcDispatch(&d->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 total_entries;
-        } *resp;
-
-        serviceIpcParse(&d->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            if (total_entries) *total_entries = resp->total_entries;
-        }
-    }
-
-    return rc;
+Result fsDirRead(FsDir* d, u64 inval, u64* total_entries, size_t max_entries, FsDirectoryEntry *buf) {
+    return _fsObjectDispatchInOut(&d->s, 0, inval, *total_entries,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
+        .buffers = { { buf, sizeof(FsDirectoryEntry)*max_entries } },
+    );
 }
 
 Result fsDirGetEntryCount(FsDir* d, u64* count) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&d->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 1;
-
-    Result rc = serviceIpcDispatch(&d->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 count;
-        } *resp;
-
-        serviceIpcParse(&d->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-        if (R_SUCCEEDED(rc) && count) *count = resp->count;
-    }
-
-    return rc;
+    return _fsObjectDispatchOut(&d->s, 1, *count);
 }
 
-// IStorage implementation
-Result fsStorageRead(FsStorage* s, u64 off, void* buf, size_t len) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddRecvBuffer(&c, buf, len, 1);
+//-----------------------------------------------------------------------------
+// IStorage
+//-----------------------------------------------------------------------------
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
+Result fsStorageRead(FsStorage* s, u64 off, void* buf, u64 read_size) {
+    const struct {
         u64 offset;
         u64 read_size;
-    } *raw;
+    } in = { off, read_size };
 
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-    raw->offset = off;
-    raw->read_size = len;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&s->s, 0, in,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out | SfBufferAttr_HipcMapTransferAllowsNonSecure },
+        .buffers = { { buf, read_size } },
+    );
 }
 
-Result fsStorageWrite(FsStorage* s, u64 off, const void* buf, size_t len) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddSendBuffer(&c, buf, len, 1);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
+Result fsStorageWrite(FsStorage* s, u64 off, const void* buf, u64 write_size) {
+    const struct {
         u64 offset;
         u64 write_size;
-    } *raw;
+    } in = { off, write_size };
 
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 1;
-    raw->offset = off;
-    raw->write_size = len;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&s->s, 1, in,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_In | SfBufferAttr_HipcMapTransferAllowsNonSecure },
+        .buffers = { { buf, write_size } },
+    );
 }
 
 Result fsStorageFlush(FsStorage* s) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 2;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsCmdNoIO(&s->s, 2);
 }
 
 Result fsStorageSetSize(FsStorage* s, u64 sz) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u64 size;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 3;
-    raw->size = sz;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-    }
-
-    return rc;
+    return _fsObjectDispatchIn(&s->s, 3, sz);
 }
 
 Result fsStorageGetSize(FsStorage* s, u64* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
+    return _fsObjectDispatchOut(&s->s, 4, *out);
+}
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
+Result fsStorageOperateRange(FsStorage* s, FsOperationId op_id, u64 off, u64 len, FsRangeInfo* out) {
+    if (hosversionBefore(4,0,0))
+        return MAKERESULT(Module_Libnx, LibnxError_IncompatSysVer);
 
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
+    const struct {
+        u32 op_id;
+        u32 pad;
+        u64 off;
+        u64 len;
+    } in = { op_id, 0, off, len };
 
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 4;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 size;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-        if (R_SUCCEEDED(rc) && out) *out = resp->size;
-    }
-
-    return rc;
+    return _fsObjectDispatchInOut(&s->s, 5, in, *out);
 }
 
 void fsStorageClose(FsStorage* s) {
-    serviceClose(&s->s);
+    _fsObjectClose(&s->s);
 }
 
+//-----------------------------------------------------------------------------
 // ISaveDataInfoReader
-Result fsSaveDataIteratorRead(FsSaveDataIterator *s, FsSaveDataInfo* buf, size_t max_entries, size_t* total_entries) {
-    IpcCommand c;
-    ipcInitialize(&c);
-    ipcAddRecvBuffer(&c, buf, sizeof(FsSaveDataInfo)*max_entries, 0);
+//-----------------------------------------------------------------------------
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&s->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-
-    Result rc = serviceIpcDispatch(&s->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u64 total_entries;
-        } *resp;
-
-        serviceIpcParse(&s->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            if (total_entries) *total_entries = resp->total_entries;
-        }
-    }
-
-    return rc;
+// Actually called ReadSaveDataInfo
+Result fsSaveDataInfoReaderRead(FsSaveDataInfoReader *s, FsSaveDataInfo* buf, size_t max_entries, u64* total_entries) {
+    return _fsObjectDispatchOut(&s->s, 0, *total_entries,
+        .buffer_attrs = { SfBufferAttr_HipcMapAlias | SfBufferAttr_Out },
+        .buffers = { { buf, sizeof(FsSaveDataInfo)*max_entries } },
+    );
 }
 
-void fsSaveDataIteratorClose(FsSaveDataIterator* s) {
-    serviceClose(&s->s);
+void fsSaveDataInfoReaderClose(FsSaveDataInfoReader* s) {
+    _fsObjectClose(&s->s);
 }
 
+//-----------------------------------------------------------------------------
 // IEventNotifier
-Result fsEventNotifierGetEventHandle(FsEventNotifier* e, Handle* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
+//-----------------------------------------------------------------------------
 
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
+Result fsEventNotifierGetEventHandle(FsEventNotifier* e, Event* out, bool autoclear) {
+    Handle event = INVALID_HANDLE;
+    Result rc = _fsObjectDispatch(&e->s, 0,
+        .out_handle_attrs = { SfOutHandleAttr_HipcCopy },
+        .out_handles = &event,
+    );
 
-    raw = serviceIpcPrepareHeader(&e->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 0;
-
-    Result rc = serviceIpcDispatch(&e->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-        } *resp;
-
-        serviceIpcParse(&e->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = r.Handles[0];
-        }
-    }
+    if (R_SUCCEEDED(rc))
+        eventLoadRemote(out, event, autoclear);
 
     return rc;
 }
 
 void fsEventNotifierClose(FsEventNotifier* e) {
-    serviceClose(&e->s);
+    _fsObjectClose(&e->s);
 }
 
+//-----------------------------------------------------------------------------
 // IDeviceOperator
-static Result _fsDeviceOperatorCheckInserted(FsDeviceOperator* d, u32 cmd_id, bool* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&d->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = cmd_id;
-
-    Result rc = serviceIpcDispatch(&d->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u8 is_inserted;
-        } *resp;
-
-        serviceIpcParse(&d->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->is_inserted != 0;
-        }
-    }
-
-    return rc;
-}
+//-----------------------------------------------------------------------------
 
 Result fsDeviceOperatorIsSdCardInserted(FsDeviceOperator* d, bool* out) {
-    return _fsDeviceOperatorCheckInserted(d, 0, out);
+    return _fsCmdNoInOutBool(&d->s, out, 0);
 }
 
 Result fsDeviceOperatorIsGameCardInserted(FsDeviceOperator* d, bool* out) {
-    return _fsDeviceOperatorCheckInserted(d, 200, out);
+    return _fsCmdNoInOutBool(&d->s, out, 200);
 }
 
 Result fsDeviceOperatorGetGameCardHandle(FsDeviceOperator* d, FsGameCardHandle* out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&d->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 202;
-
-    Result rc = serviceIpcDispatch(&d->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u32 handle;
-        } *resp;
-
-        serviceIpcParse(&d->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            out->value = resp->handle;
-        }
-    }
-
-    return rc;
+    return _fsObjectDispatchOut(&d->s, 202, *out);
 }
 
 Result fsDeviceOperatorGetGameCardAttribute(FsDeviceOperator* d, const FsGameCardHandle* handle, u8 *out) {
-    IpcCommand c;
-    ipcInitialize(&c);
-
-    struct {
-        u64 magic;
-        u64 cmd_id;
-        u32 handle;
-    } *raw;
-
-    raw = serviceIpcPrepareHeader(&d->s, &c, sizeof(*raw));
-
-    raw->magic = SFCI_MAGIC;
-    raw->cmd_id = 205;
-    raw->handle = handle->value;
-
-    Result rc = serviceIpcDispatch(&d->s);
-
-    if (R_SUCCEEDED(rc)) {
-        IpcParsedCommand r;
-        struct {
-            u64 magic;
-            u64 result;
-            u8 attr;
-        } *resp;
-
-        serviceIpcParse(&d->s, &r, sizeof(*resp));
-        resp = r.Raw;
-
-        rc = resp->result;
-
-        if (R_SUCCEEDED(rc)) {
-            *out = resp->attr;
-        }
-    }
-
-    return rc;
+    return _fsObjectDispatchInOut(&d->s, 205, *handle, *out);
 }
 
 void fsDeviceOperatorClose(FsDeviceOperator* d) {
-    serviceClose(&d->s);
+    _fsObjectClose(&d->s);
 }

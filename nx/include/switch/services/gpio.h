@@ -1,12 +1,12 @@
 /**
- * @file i2c.h
- * @brief I2C service IPC wrapper.
+ * @file gpio.h
+ * @brief GPIO service IPC wrapper.
  * @author SciresM
  * @copyright libnx Authors
  */
 #pragma once
 #include "../types.h"
-#include "sm.h"
+#include "../sf/service.h"
 
 typedef enum {
     GpioPadName_AudioCodec = 1,
@@ -28,8 +28,14 @@ typedef enum {
     GpioValue_High = 1,
 } GpioValue;
 
+/// Initialize gpio.
 Result gpioInitialize(void);
+
+/// Exit gpio.
 void gpioExit(void);
+
+/// Gets the Service object for the actual gpio service session.
+Service* gpioGetServiceSession(void);
 
 Result gpioOpenSession(GpioPadSession *out, GpioPadName name);
 

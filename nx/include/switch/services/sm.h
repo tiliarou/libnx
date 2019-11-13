@@ -9,67 +9,10 @@
 #include "../types.h"
 #include "../kernel/svc.h"
 #include "../kernel/ipc.h"
+#include "../sf/service.h"
 
-/// Service type.
-typedef enum {
-    ServiceType_Uninitialized,      ///< Uninitialized service.
-    ServiceType_Normal,             ///< Normal service.
-    ServiceType_Domain,             ///< Domain.
-    ServiceType_DomainSubservice,   ///< Domain subservice;
-    ServiceType_Override,           ///< Service overriden in the homebrew environment.
-} ServiceType;
-
-/// Service object structure.
-typedef struct {
-    Handle handle;
-    u32 object_id;
-    ServiceType type;
-} Service;
-
-/**
- * @brief Returns whether a service is overriden in the homebrew environment.
- * @param[in] s Service object.
- * @return true if overriden.
- */
-static inline bool serviceIsOverride(Service* s) {
-    return s->type == ServiceType_Override;
-}
-
-/**
- * @brief Returns whether a service has been initialized.
- * @param[in] s Service object.
- * @return true if initialized.
- */
-static inline bool serviceIsActive(Service* s) {
-    return s->type != ServiceType_Uninitialized;
-}
-
-/**
- * @brief Returns whether a service is a domain.
- * @param[in] s Service object.
- * @return true if a domain.
- */
-static inline bool serviceIsDomain(Service* s) {
-    return s->type == ServiceType_Domain;
-}
-
-/**
- * @brief Returns whether a service is a domain subservice.
- * @param[in] s Service object.
- * @return true if a domain subservice.
- */
-static inline bool serviceIsDomainSubservice(Service* s) {
-    return s->type == ServiceType_DomainSubservice;
-}
-
-/**
- * @brief For a domain/domain subservice, return the associated object ID.
- * @param[in] s Service object, necessarily a domain or domain subservice.
- * @return The object ID.
- */
-static inline u32 serviceGetObjectId(Service* s) {
-    return s->object_id;
-}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 /**
  * @brief Closes a domain object by ID.
@@ -77,8 +20,9 @@ static inline u32 serviceGetObjectId(Service* s) {
  * @param object_id ID of the object to close.
  * @return Result code.
  */
+DEPRECATED
 static inline Result serviceCloseObjectById(Service* s, u32 object_id) {
-    return ipcCloseObjectById(s->handle, object_id);
+    return ipcCloseObjectById(s->session, object_id);
 }
 
 /**
@@ -86,31 +30,9 @@ static inline Result serviceCloseObjectById(Service* s, u32 object_id) {
  * @param[in] s Service object.
  * @return Result code.
  */
+DEPRECATED
 static inline Result serviceIpcDispatch(Service* s) {
-    return ipcDispatch(s->handle);
-}
-
-/**
- * @brief Creates a service object from an IPC session handle.
- * @param[out] s Service object.
- * @param[in] h IPC session handle.
- */
-static inline void serviceCreate(Service* s, Handle h) {
-    s->handle = h;
-    s->type = ServiceType_Normal;
-    s->object_id = IPC_INVALID_OBJECT_ID;
-}
-
-/**
- * @brief Creates a domain subservice object from a parent service.
- * @param[out] s Service object.
- * @param[in] parent Parent service, necessarily a domain or domain subservice.
- * @param[in] object_id Object ID for this subservice.
- */
-static inline void serviceCreateDomainSubservice(Service* s, Service* parent, u32 object_id) {
-    s->handle = parent->handle;
-    s->type = ServiceType_DomainSubservice;
-    s->object_id = object_id;
+    return ipcDispatch(s->session);
 }
 
 /**
@@ -120,6 +42,7 @@ static inline void serviceCreateDomainSubservice(Service* s, Service* parent, u3
  * @param[in] r Parsed IPC command containing handles/object IDs to create subservice from.
  * @param[in] i The index of the handle/object ID to create subservice from.
  */
+DEPRECATED
 static inline void serviceCreateSubservice(Service* s, Service* parent, IpcParsedCommand* r, int i) {
     if (r->IsDomainResponse) {
         return serviceCreateDomainSubservice(s, parent, r->OutObjectIds[i]);
@@ -133,62 +56,12 @@ static inline void serviceCreateSubservice(Service* s, Service* parent, IpcParse
  * @param[in] s Service object to send.
  * @param[in] cmd IPC command structure.
  */
+DEPRECATED
 static inline void serviceSendObject(Service* s, IpcCommand* cmd) {
     if (serviceIsDomain(s) || serviceIsDomainSubservice(s)) {
         ipcSendObjectId(cmd, s->object_id);
     }
 }
-
-/**
- * @brief Converts a regular service to a domain.
- * @param[in] s Service object.
- * @return Result code.
- */
-static inline Result serviceConvertToDomain(Service* s) {
-    Result rc = 0;
-    if (serviceIsOverride(s)) {
-        rc = ipcCloneSession(s->handle, 1, &s->handle);
-        if (R_FAILED(rc)) {
-            return rc;
-        }
-        s->type = ServiceType_Normal;
-    }
-    rc = ipcConvertSessionToDomain(s->handle, &s->object_id);
-    if (R_SUCCEEDED(rc)) {
-        s->type = ServiceType_Domain;
-    }
-    return rc;
-}
-
-/**
- * @brief Closes a service.
- * @param[in] s Service object.
- */
-static inline void serviceClose(Service* s) {
-    switch (s->type) {
-
-    case ServiceType_Normal:
-    case ServiceType_Domain:
-        ipcCloseSession(s->handle);
-        svcCloseHandle(s->handle);
-        break;
-
-    case ServiceType_DomainSubservice:
-        serviceCloseObjectById(s, s->object_id);
-        break;
-
-    case ServiceType_Override:
-        // Don't close because we don't own the overridden handle.
-        break;
-
-    case ServiceType_Uninitialized:
-        break;
-    }
-
-    s->type = ServiceType_Uninitialized;
-}
-
-
 
 /**
  * @brief Prepares the header of an IPC command structure for a service.
@@ -197,6 +70,7 @@ static inline void serviceClose(Service* s) {
  * @param sizeof_raw Size in bytes of the raw data structure to embed inside the IPC request
  * @return Pointer to the raw embedded data structure in the request, ready to be filled out.
  */
+DEPRECATED
 static inline void* serviceIpcPrepareHeader(Service* s, IpcCommand* cmd, size_t sizeof_raw) {
     if (serviceIsDomain(s) || serviceIsDomainSubservice(s)) {
         return ipcPrepareHeaderForDomain(cmd, sizeof_raw, serviceGetObjectId(s));
@@ -212,12 +86,64 @@ static inline void* serviceIpcPrepareHeader(Service* s, IpcCommand* cmd, size_t 
  * @param sizeof_raw Size in bytes of the raw data structure.
  * @return Result code.
  */
+DEPRECATED
 static inline Result serviceIpcParse(Service* s, IpcParsedCommand* r, size_t sizeof_raw) {
     if (serviceIsDomain(s) || serviceIsDomainSubservice(s)) {
         return ipcParseDomainResponse(r, sizeof_raw);
     } else {
         return ipcParse(r);
     }
+}
+
+#pragma GCC diagnostic pop
+
+/// Structure representing a service name (null terminated, remaining characters set to zero).
+typedef struct SmServiceName {
+    char name[8];
+} SmServiceName;
+
+/// Converts a service name into a 64-bit integer.
+NX_CONSTEXPR u64 smServiceNameToU64(SmServiceName name)
+{
+    u64 ret = 0;
+    __builtin_memcpy(&ret, &name, sizeof(u64));
+    return ret;
+}
+
+/// Converts a 64-bit integer into a service name.
+NX_CONSTEXPR SmServiceName smServiceNameFromU64(u64 name)
+{
+    SmServiceName ret = {0};
+    __builtin_memcpy(&ret, &name, sizeof(SmServiceName));
+    return ret;
+}
+
+/**
+ * @brief Checks whether two service names are equal.
+ * @param[in] a First name.
+ * @param[in] b Second name.
+ * @return Comparison result.
+ */
+NX_CONSTEXPR bool smServiceNamesAreEqual(SmServiceName a, SmServiceName b)
+{
+    return smServiceNameToU64(a) == smServiceNameToU64(b);
+}
+
+/**
+ * @brief Encodes a service name string as a \ref SmServiceName structure.
+ * @param[in] name Name of the service.
+ * @return Encoded name.
+ */
+NX_CONSTEXPR SmServiceName smEncodeName(const char* name)
+{
+    SmServiceName name_encoded = {};
+    unsigned len = __builtin_strlen(name);
+#define __COPY_CHAR(_n) \
+    if (len > _n) name_encoded.name[_n] = name[_n]
+    __COPY_CHAR(0); __COPY_CHAR(1); __COPY_CHAR(2); __COPY_CHAR(3);
+    __COPY_CHAR(4); __COPY_CHAR(5); __COPY_CHAR(6); __COPY_CHAR(7);
+#undef __COPY_CHAR
+    return name_encoded;
 }
 
 /**
@@ -235,12 +161,12 @@ Result smInitialize(void);
 void   smExit(void);
 
 /**
- * @brief Requests a service from SM.
+ * @brief Requests a service from SM, allowing overrides.
  * @param[out] service_out Service structure which will be filled in.
  * @param[in] name Name of the service to request.
  * @return Result code.
  */
-Result smGetService(Service* service_out, const char* name);
+Result smGetServiceWrapper(Service* service_out, SmServiceName name);
 
 /**
  * @brief Requests a service from SM, as an IPC session handle directly
@@ -248,14 +174,25 @@ Result smGetService(Service* service_out, const char* name);
  * @param[in] name Name of the service to request.
  * @return Result code.
  */
-Result smGetServiceOriginal(Handle* handle_out, u64 name);
+Result smGetServiceOriginal(Handle* handle_out, SmServiceName name);
+
+/**
+ * @brief Requests a service from SM.
+ * @param[out] service_out Service structure which will be filled in.
+ * @param[in] name Name of the service to request (as a string).
+ * @return Result code.
+ */
+NX_INLINE Result smGetService(Service* service_out, const char* name)
+{
+    return smGetServiceWrapper(service_out, smEncodeName(name));
+}
 
 /**
  * @brief Retrieves an overriden service in the homebrew environment.
- * @param[in] name Name of the service to request (as 64-bit integer).
+ * @param[in] name Name of the service to request.
  * @return IPC session handle.
  */
-Handle smGetServiceOverride(u64 name);
+Handle smGetServiceOverride(SmServiceName name);
 
 /**
  * @brief Creates and registers a new service within SM.
@@ -265,31 +202,24 @@ Handle smGetServiceOverride(u64 name);
  * @param[in] max_sessions Maximum number of concurrent sessions that the service will accept.
  * @return Result code.
  */
-Result smRegisterService(Handle* handle_out, const char* name, bool is_light, int max_sessions);
+Result smRegisterService(Handle* handle_out, SmServiceName name, bool is_light, s32 max_sessions);
 
 /**
  * @brief Unregisters a previously registered service in SM.
  * @param[in] name Name of the service.
  * @return Result code.
  */
-Result smUnregisterService(const char* name);
+Result smUnregisterService(SmServiceName name);
 
 /**
- * @brief Check whether SM is initialized.
- * @return true if initialized.
+ * @brief Gets the Service session used to communicate with SM.
+ * @return Pointer to service session used to communicate with SM.
  */
-bool   smHasInitialized(void);
-
-/**
- * @brief Encodes a service name as a 64-bit integer.
- * @param[in] name Name of the service.
- * @return Encoded name.
- */ 
-u64    smEncodeName(const char* name);
+Service *smGetServiceSession(void);
 
 /**
  * @brief Overrides a service with a custom IPC service handle.
- * @param[in] name Name of the service (as 64-bit integer).
+ * @param[in] name Name of the service.
  * @param[in] handle IPC session handle.
  */
-void   smAddOverrideHandle(u64 name, Handle handle);
+void smAddOverrideHandle(SmServiceName name, Handle handle);

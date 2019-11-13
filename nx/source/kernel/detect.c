@@ -28,15 +28,15 @@ static void _CacheVersion(void)
 
     u64 tmp;
     g_Version = 1;
-    if (R_VALUE(svcGetInfo(&tmp, 12, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
+    if (R_VALUE(svcGetInfo(&tmp, InfoType_AslrRegionAddress, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
         g_Version = 2;
-    if (R_VALUE(svcGetInfo(&tmp, 18, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
+    if (R_VALUE(svcGetInfo(&tmp, InfoType_ProgramId, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
         g_Version = 3;
-    if (R_VALUE(svcGetInfo(&tmp, 19, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
+    if (R_VALUE(svcGetInfo(&tmp, InfoType_InitialProcessIdRange, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
         g_Version = 4;
-    if (R_VALUE(svcGetInfo(&tmp, 20, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
+    if (R_VALUE(svcGetInfo(&tmp, InfoType_UserExceptionContextAddress, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
         g_Version = 5;
-    if (R_VALUE(svcGetInfo(&tmp, 21, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
+    if (R_VALUE(svcGetInfo(&tmp, InfoType_TotalNonSystemMemorySize, INVALID_HANDLE, 0)) != KERNELRESULT(InvalidEnumValue))
         g_Version = 6;
 
     __atomic_store_n(&g_VersionCached, true, __ATOMIC_SEQ_CST);
@@ -64,7 +64,7 @@ static void _CacheJitKernelPatch(void)
         rc = svcCreateCodeMemory(&code, heap, 0x1000);
 
         if (R_SUCCEEDED(rc)) {
-            // On an unpatched kernel on 5.0.0 and above, this would return InvalidMemoryState (0xD401).
+            // On an unpatched kernel on [5.0.0+], this would return InvalidMemoryState (0xD401).
             // It is not allowed for the creator-process of a CodeMemory object to use svcControlCodeMemory on it.
             // If the patch is present, the function should return InvalidEnumValue (0xF001), because -1 is not a valid enum CodeOperation.
             rc = svcControlCodeMemory(code, -1, 0, 0x1000, 0);
@@ -88,7 +88,7 @@ int detectKernelVersion(void) {
 
 bool detectDebugger(void) {
     u64 tmp;
-    svcGetInfo(&tmp, 8, 0, 0);
+    svcGetInfo(&tmp, InfoType_DebuggerAttached, INVALID_HANDLE, 0);
     return !!tmp;
 }
 

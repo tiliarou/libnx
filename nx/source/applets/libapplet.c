@@ -5,6 +5,8 @@
 #include "services/applet.h"
 #include "applets/libapplet.h"
 
+static bool g_libappletJumpFlag;
+
 void libappletArgsCreate(LibAppletArgs* a, u32 version) {
     memset(a, 0, sizeof(LibAppletArgs));
 
@@ -69,6 +71,28 @@ Result libappletArgsPush(LibAppletArgs* a, AppletHolder *h) {
     return _libappletPushInData(h, a, sizeof(LibAppletArgs));
 }
 
+Result libappletArgsPop(LibAppletArgs* a) {
+    //Official sw stores the header in LibAppletArgs seperately (first 8-bytes), but here we're including it with the LibAppletCommonArguments struct.
+    //Official sw uses appletStorageRead twice, for reading the header then the rest of the struct.
+
+    AppletStorage storage;
+    s64 tmpsize=0;
+    size_t tmpsize2=0;
+    Result rc=0;
+    memset(a, 0, sizeof(LibAppletArgs));
+    rc = appletPopInData(&storage);
+
+    if (R_SUCCEEDED(rc)) rc = appletStorageGetSize(&storage, &tmpsize);
+    if (R_SUCCEEDED(rc) && tmpsize != sizeof(LibAppletArgs)) rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+
+    if (R_SUCCEEDED(rc)) rc = libappletReadStorage(&storage, a, sizeof(LibAppletArgs), &tmpsize2);
+    if (R_SUCCEEDED(rc) && tmpsize2 != sizeof(LibAppletArgs)) rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    if (R_SUCCEEDED(rc)) {
+        if (a->CommonArgs_version != 1 || a->CommonArgs_size != sizeof(LibAppletArgs)) rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    }
+    return rc;
+}
+
 static Result _libappletQlaunchRequest(u8* buf, size_t size) {
     Result rc=0;
     AppletStorage storage;
@@ -92,6 +116,51 @@ Result libappletPopOutData(AppletHolder *h, void* buffer, size_t size, size_t *t
 
     rc = libappletReadStorage(&storage, buffer, size, transfer_size);
     appletStorageClose(&storage);
+    return rc;
+}
+
+void libappletSetJumpFlag(bool flag) {
+    g_libappletJumpFlag = flag;
+}
+
+Result libappletStart(AppletHolder *h) {
+    Result rc=0;
+
+    if (g_libappletJumpFlag)
+        return appletHolderJump(h);
+
+    rc = appletHolderStart(h);
+
+    if (R_SUCCEEDED(rc)) {
+        appletHolderJoin(h);
+
+        LibAppletExitReason reason = appletHolderGetExitReason(h);
+
+        if (reason == LibAppletExitReason_Canceled || reason == LibAppletExitReason_Abnormal || reason == LibAppletExitReason_Unexpected) {
+            rc = MAKERESULT(Module_Libnx, LibnxError_LibAppletBadExit);
+        }
+    }
+
+    return rc;
+}
+
+Result libappletLaunch(AppletId id, LibAppletArgs *commonargs, const void* arg, size_t arg_size, void* reply, size_t reply_size, size_t *out_reply_size) {
+    Result rc=0;
+    AppletHolder holder;
+
+    rc = appletCreateLibraryApplet(&holder, id, LibAppletMode_AllForeground);
+    if (R_FAILED(rc)) return rc;
+
+    rc = libappletArgsPush(commonargs, &holder);
+
+    if (R_SUCCEEDED(rc) && arg && arg_size) rc = libappletPushInData(&holder, arg, arg_size);
+
+    if (R_SUCCEEDED(rc)) rc = libappletStart(&holder);
+
+    if (R_SUCCEEDED(rc) && reply && reply_size) rc = libappletPopOutData(&holder, reply, reply_size, out_reply_size);
+
+    appletHolderClose(&holder);
+
     return rc;
 }
 

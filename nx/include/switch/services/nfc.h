@@ -7,7 +7,47 @@
 
 #pragma once
 #include "../types.h"
-#include "../services/hid.h"
+#include "../sf/service.h"
+
+/// NfpServiceType
+typedef enum {
+    NfpServiceType_NotInitialized = 0,  ///< Same as ::NfpServiceType_User during \ref nfpInitialize.
+    NfpServiceType_User           = 1,  ///< Initializes nfp:user.
+    NfpServiceType_Debug          = 2,  ///< Initializes nfp:dbg.
+    NfpServiceType_System         = 3,  ///< Initializes nfp:sys.
+} NfpServiceType;
+
+/// NfcServiceType
+typedef enum {
+    NfcServiceType_NotInitialized = 0,  ///< Same as ::NfcServiceType_User during \ref nfcInitialize.
+    NfcServiceType_User           = 1,  ///< Initializes nfc:user.
+    NfcServiceType_System         = 3,  ///< Initializes nfc:sys.
+} NfcServiceType;
+
+typedef enum {
+    NfpState_NonInitialized = 0,
+    NfpState_Initialized    = 1,
+} NfpState;
+
+typedef enum {
+    NfpDeviceState_Initialized     = 0,
+    NfpDeviceState_SearchingForTag = 1,
+    NfpDeviceState_TagFound        = 2,
+    NfpDeviceState_TagRemoved      = 3,
+    NfpDeviceState_TagMounted      = 4,
+    NfpDeviceState_Unavailable     = 5,
+    NfpDeviceState_Finalized       = 6,
+} NfpDeviceState;
+
+typedef enum {
+    NfpDeviceType_Amiibo = 0,
+} NfpDeviceType;
+
+typedef enum {
+    NfpMountTarget_Rom = 1,
+    NfpMountTarget_Ram = 2,
+    NfpMountTarget_All = 3,
+} NfpMountTarget;
 
 typedef struct {
     u8  uuid[10];
@@ -16,7 +56,7 @@ typedef struct {
     u32 protocol;
     u32 tag_type;
     u8  reserved2[0x30];
-} PACKED NfpuTagInfo;
+} PACKED NfpTagInfo;
 
 typedef struct {
     u16 last_write_year;
@@ -26,12 +66,12 @@ typedef struct {
     u16 version;
     u32 application_area_size;
     u8  reserved[0x34];
-} PACKED NfpuCommonInfo;
+} PACKED NfpCommonInfo;
 
 typedef struct {
     u8 amiibo_id[0x8];
     u8 reserved[0x38];
-} PACKED NfpuModelInfo;
+} PACKED NfpModelInfo;
 
 typedef struct {
     u8 unk_x0[0x10]; // Hash?
@@ -85,83 +125,100 @@ typedef struct {
     u8 mii_mole_pos_x;
     u8 mii_mole_pos_y;
     u8 unk_x57;
-} PACKED NfpuMiiCharInfo;
+} PACKED NfpMiiCharInfo;
 
 typedef struct {
-    NfpuMiiCharInfo mii;
+    NfpMiiCharInfo mii;
     u16 first_write_year;
     u8 first_write_month;
     u8 first_write_day;
     char amiibo_name[10+1]; ///< utf-8, null-terminated
     u8 reserved[0x99];
-} PACKED NfpuRegisterInfo;
+} PACKED NfpRegisterInfo;
 
 typedef struct {
-    u64 unk1;
-    u64 reserved1[3];
-    u64 unk2;
-    u64 reserved2[3];
-} NfpuInitConfig;
+    u64 version;
+    u64 reserved[3];
+} NfcRequiredMcuVersionData;
 
-typedef enum {
-    NfpuState_NonInitialized = 0,
-    NfpuState_Initialized    = 1,
-} NfpuState;
+/// Nfc/Nfp DeviceHandle
+typedef struct {
+    u8 handle[0x8];            ///< Handle.
+} NfcDeviceHandle;
 
-typedef enum {
-    NfpuDeviceState_Initialized     = 0,
-    NfpuDeviceState_SearchingForTag = 1,
-    NfpuDeviceState_TagFound        = 2,
-    NfpuDeviceState_TagRemoved      = 3,
-    NfpuDeviceState_TagMounted      = 4,
-    NfpuDeviceState_Unavailable     = 5,
-    NfpuDeviceState_Finalized       = 6,
-} NfpuDeviceState;
+/**
+ * @brief Sets the \ref NfpServiceType for initialization. Call this function before \ref nfpInitialize, if needed.
+ * @note By default ::NfpServiceType_NotInitialized will be used.
+ */
+void nfpSetServiceType(NfpServiceType serviceType);
 
-typedef enum {
-    NfpuDeviceType_Amiibo = 0,
-} NfpuDeviceType;
+/**
+ * @brief Sets the \ref NfcServiceType for initialization. Call this function before \ref nfcInitialize, if needed.
+ * @note By default ::NfcServiceType_NotInitialized will be used.
+ */
+void nfcSetServiceType(NfcServiceType serviceType);
 
-typedef enum {
-    NfpuMountTarget_Rom = 1,
-    NfpuMountTarget_Ram = 2,
-    NfpuMountTarget_All = 3,
-} NfpuMountTarget;
+/// Initialize nfp:*.
+Result nfpInitialize(void);
 
-Result nfpuInitialize(const NfpuInitConfig *config);
-void nfpuExit(void);
-Service* nfpuGetInterface(void);
+/// Exit nfp:*.
+void nfpExit(void);
 
-Result nfpuStartDetection(HidControllerID id);
-Result nfpuStopDetection(HidControllerID id);
+/// Initialize nfc:*.
+Result nfcInitialize(void);
+
+/// Exit nfc:*.
+void nfcExit(void);
+
+/// Gets the Service object for the actual nfp:* service session.
+Service* nfpGetServiceSession(void);
+
+/// Gets the Service object for the interface from nfp:*.
+Service* nfpGetServiceSession_Interface(void);
+
+/// Gets the Service object for the actual nfc:* service session.
+Service* nfcGetServiceSession(void);
+
+/// Gets the Service object for the interface from nfc:*.
+Service* nfcGetServiceSession_Interface(void);
+
+Result nfpListDevices(s32 *total_out, NfcDeviceHandle *out, s32 count);
+Result nfpStartDetection(const NfcDeviceHandle *handle);
+Result nfpStopDetection(const NfcDeviceHandle *handle);
+Result nfpMount(const NfcDeviceHandle *handle, NfpDeviceType device_type, NfpMountTarget mount_target);
+Result nfpUnmount(const NfcDeviceHandle *handle);
+
+/// Not available with ::NfpServiceType_System.
+Result nfpOpenApplicationArea(const NfcDeviceHandle *handle, u32 app_id, u32 *npad_id);
+
+/// Not available with ::NfpServiceType_System.
+Result nfpGetApplicationArea(const NfcDeviceHandle *handle, void* buf, size_t buf_size);
+
+/// Not available with ::NfpServiceType_System.
+Result nfpSetApplicationArea(const NfcDeviceHandle *handle, const void* buf, size_t buf_size);
+Result nfpFlush(const NfcDeviceHandle *handle);
+Result nfpRestore(const NfcDeviceHandle *handle);
+
+/// Not available with ::NfpServiceType_System.
+Result nfpCreateApplicationArea(const NfcDeviceHandle *handle, u32 app_id, const void* buf, size_t buf_size);
+
+Result nfpGetTagInfo(const NfcDeviceHandle *handle, NfpTagInfo *out);
+Result nfpGetRegisterInfo(const NfcDeviceHandle *handle, NfpRegisterInfo *out);
+Result nfpGetCommonInfo(const NfcDeviceHandle *handle, NfpCommonInfo *out);
+Result nfpGetModelInfo(const NfcDeviceHandle *handle, NfpModelInfo *out);
 
 /// Returned event will have autoclear off.
-Result nfpuAttachActivateEvent(HidControllerID id, Event *out);
+Result nfpAttachActivateEvent(const NfcDeviceHandle *handle, Event *out_event);
 /// Returned event will have autoclear off.
-Result nfpuAttachDeactivateEvent(HidControllerID id, Event *out);
+Result nfpAttachDeactivateEvent(const NfcDeviceHandle *handle, Event *out_event);
+
+Result nfpGetState(NfpState *out);
+Result nfpGetDeviceState(const NfcDeviceHandle *handle, NfpDeviceState *out);
+Result nfpGetNpadId(const NfcDeviceHandle *handle, u32 *out);
+
 /// Returned event will have autoclear on.
-Result nfpuAttachAvailabilityChangeEvent(Event *out);
+/// Only available with [3.0.0+].
+Result nfpAttachAvailabilityChangeEvent(Event *out_event);
 
-Result nfpuGetState(NfpuState *out);
-Result nfpuGetDeviceState(HidControllerID id, NfpuDeviceState *out);
-Result nfpuListDevices(u32 *count, HidControllerID *out, size_t num_elements);
-Result nfpuGetNpadId(HidControllerID id, u32 *out);
-
-Result nfpuMount(HidControllerID id, NfpuDeviceType device_type, NfpuMountTarget mount_target);
-Result nfpuUnmount(HidControllerID id);
-
-Result nfpuGetTagInfo(HidControllerID id, NfpuTagInfo *out);
-Result nfpuGetRegisterInfo(HidControllerID id, NfpuRegisterInfo *out);
-Result nfpuGetCommonInfo(HidControllerID id, NfpuCommonInfo *out);
-Result nfpuGetModelInfo(HidControllerID id, NfpuModelInfo *out);
-
-Result nfpuOpenApplicationArea(HidControllerID id, u32 app_id, u32 *npad_id);
-Result nfpuGetApplicationArea(HidControllerID id, void* buf, size_t buf_size);
-Result nfpuSetApplicationArea(HidControllerID id, const void* buf, size_t buf_size);
-Result nfpuCreateApplicationArea(HidControllerID id, u32 app_id, const void* buf, size_t buf_size);
-
-Result nfpuFlush(HidControllerID id);
-Result nfpuRestore(HidControllerID id);
-
-/// Calls nfc:user.
-Result nfpuIsNfcEnabled(bool *out);
+/// This uses nfc:*.
+Result nfcIsNfcEnabled(bool *out);

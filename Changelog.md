@@ -1,5 +1,335 @@
 # Changelog
 
+## Version 2.5.0
+
+#### system
+* Corrected type of id0 in svcGetInfo.
+
+#### filesystem
+* Added fsExtendSaveDataFileSystem, fsOpenCustomStorageFileSystem, fsSetGlobalAccessLogMode, fsGetGlobalAccessLogMode.
+* Added FsCustomStorageId enum.
+* Fixed by-name RomFS mount lookups to actually compare the entire name.
+
+#### graphics
+* Added binder session argument to nwindowCreate (nwindowCreateFromLayer not affected).
+* Binder code now supports domain objects.
+* Fixed bug in nvAddressSpaceCreate.
+
+#### input
+* **Explicitly announce support for System/SystemExt layouts, which in turn fixes input on 9.0.0+. It is of utmost importance that all homebrew be recompiled as soon as possible in order to work properly on 9.0.0+.**
+* **Fixed Hdls to work on 9.0.0+.**
+  * Several Hdls structs were redefined in 9.0.0+ and libnx was updated to reflect the new struct definitions (this is a breaking change). The old structs are still available but they now have a `V7` suffix, and libnx transparently handles conversion to/from the new 9.x structs at runtime on older system versions; so the new structs are *always* used regardless of system version. List of structs affected:
+    * HiddbgHdlsDeviceInfo(V7)
+    * HiddbgHdlsState(V7)
+    * HiddbgHdlsStateListEntry(V7)
+    * HiddbgHdlsStateList(V7)
+  * Added hiddbgGetUniquePadDeviceTypeSetInternal.
+* Added hidGetNpadInterfaceType.
+* Added HidNpadInterfaceType, HidDeviceTypeBits, HidDeviceType enums.
+* Prevent AbstractedPad/VirtualPad commands from being used on 9.0.0+ since they were removed.
+* Corrected several commands by internally calling hidControllerIDToOfficial.
+
+#### applet
+* Added AppletAttribute, AppletProcessLaunchReason, AppletInfo, AppletApplicationLaunchProperty, AppletApplicationLaunchRequestInfo, AppletResourceUsageInfo structs.
+* Added AppletApplicationExitReason, AppletSystemButtonType, AppletProgramSpecifyKind enums.
+* Renamed AppletNotificationMessage to AppletMessage.
+* Renamed AppletLaunchParameterKind_Application to AppletLaunchParameterKind_UserChannel.
+* Added appletGetServiceSession_* funcs.
+* Added appletGetAppletInfo.
+* Changed appletRequestToShutdown/appletRequestToReboot and appletStartShutdownSequenceForOverlay/appletStartRebootSequenceForOverlay on success to enter an infinite sleep loop.
+  * This is also used with `_appletExitProcess` when the exit commands were successful, which is used during `__nx_applet_exit_mode` handling.
+* Use OpenLibraryAppletProxy command on 3.0.0+ when running appletInitialize for AppletType_LibraryApplet.
+* Added libappletArgsPop and libappletSetJumpFlag.
+
+* **ILibraryAppletSelfAccessor**:
+  * Added appletPopInData, appletPushOutData, appletPopInteractiveInData, appletPushInteractiveOutData, appletGetPopInDataEvent, appletGetPopInteractiveInDataEvent.
+  * Added appletCanUseApplicationCore, appletGetMainAppletApplicationControlProperty, appletGetMainAppletStorageId, appletGetDesirableKeyboardLayout.
+  * Added appletPopExtraStorage, appletGetPopExtraStorageEvent, appletUnpopInData, appletUnpopExtraStorage.
+  * Added appletGetIndirectLayerProducerHandle, appletGetMainAppletApplicationDesiredLanguage, appletGetCurrentApplicationId.
+  * Added appletCreateGameMovieTrimmer, appletReserveResourceForMovieOperation, appletUnreserveResourceForMovieOperation.
+  * Added appletGetMainAppletAvailableUsers.
+* **IProcessWindingController**:
+  * Added appletPushContext, appletPopContext.
+* **IDebugFunctions**:
+  * Added appletOpenMainApplication, appletPerformSystemButtonPressing, appletInvalidateTransitionLayer, appletRequestLaunchApplicationWithUserAndArgumentForDebug, appletGetAppletResourceUsageInfo.
+* **ILibraryAppletAccessor**:
+  * Added appletHolderTerminate, appletHolderRequestExitOrTerminate.
+* **IProcessWindingController**:
+  * Added appletHolderJump.
+* **IOverlayFunctions**:
+  * Added appletBeginToObserveHidInputForDevelop.
+* **IHomeMenuFunctions**:
+  * Added appletPopRequestLaunchApplicationForDebug, appletLaunchDevMenu.
+* **IApplicationCreator**:
+  * Added support for AppletApplication.
+  * Added appletCreateApplication, appletPopLaunchRequestedApplication, appletCreateSystemApplication, appletPopFloatingApplicationForDevelopment.
+* **ILibraryAppletCreator**:
+  * Added appletTerminateAllLibraryApplets, appletAreAnyLibraryAppletsLeft.
+* **IApplicationFunctions**:
+  * Added appletGetLaunchStorageInfoForDebug, appletRequestFlushGamePlayingMovieForDebug, appletExitAndRequestToShowThanksMessage.
+  * Added appletExecuteProgram, appletJumpToSubApplicationProgramForDevelopment, appletRestartProgram, and appletGetPreviousProgramIndex.
+  * Added appletCreateMovieMaker and appletPrepareForJit.
+
+#### libapplets
+* Added support for launching the Album applet via albumLa.
+
+#### other services
+* **Added GRC service support** (video recording, streaming and trimming).
+* Changes to caps (capture service) wrappers:
+  * Added support for the caps:u service.
+  * Added CapsAlbumFileDateTime, CapsAlbumEntryId, CapsApplicationData, CapsUserIdList, CapsScreenShotAttributeForApplication, CapsScreenShotDecodeOption, CapsApplicationAlbumFileEntry, CapsLoadAlbumScreenShotImageOutputForApplication structs.
+  * Added AlbumReportOption, CapsContentType enums.
+  * Added capsGetShimLibraryVersion (not an actual IPC wrapper).
+  * Added capsGetDefaultStartDateTime, capsGetDefaultEndDateTime, capsConvertApplicationAlbumFileEntryToApplicationAlbumEntry, capsConvertApplicationAlbumEntryToApplicationAlbumFileEntry helper functions.
+  * Added capssuSaveScreenShotWithUserData, capssuSaveScreenShotWithUserIds, capssuSaveScreenShotEx1, capssuSaveScreenShotEx2.
+  * Improved definition of capssuSaveScreenShot and capssuSaveScreenShotEx0.
+  * Improved definition of CapsScreenShotAttribute, CapsApplicationAlbumEntry structs.
+  * Changed caps:su wrapper to call SetShimLibraryVersion on 7.0.0+.
+  * Renamed capsscCaptureScreenshot with capsscCaptureRawImageWithTimeout.
+* Fixed lr RedirectApplication commands on 9.0.0+.
+    * Renamed lrLrResolveLegalInformationPath to lrLrResolveApplicationLegalInformationPath.
+    * Renamed lrLrRedirectLegalInformationPath to lrLrRedirectApplicationLegalInformationPath.
+* Added missing fields to NacpStruct and other miscellaneous corrections.
+* Fixed definition of setsysGetServiceSession.
+
+#### miscellaneous
+* Further improvements to overall system stability and other minor adjustments have been made to enhance the user experience.
+
+## Version 2.4.0
+
+#### system
+* **Added support for new Homebrew ABI keys**, including: UserIdStorage, HosVersion.
+* TLS destructors now run after clearing the corresponding TLS value, as per the standard.
+
+#### applet
+* Added AppletIdentityInfo and LibAppletInfo structs.
+* Added AppletId_application.
+* Updated LibAppletMode enum.
+* Added AppletSystemButtonType enum.
+* Added AppletHookType_RequestToDisplay and AppletNotificationMessage_RequestToDisplay.
+* Added appletHolderSetOutOfFocusApplicationSuspendingEnabled and appletHolderGetLibraryAppletInfo.
+* Replaced appletHomeButtonReaderLockAccessorGetEvent with appletGetHomeButtonReaderLockAccessor.
+* Added appletGetReaderLockAccessorEx, appletGetWriterLockAccessorEx, and appletGetHomeButtonWriterLockAccessor.
+* Added support for AppletLockAccessor.
+* **ISelfController**: Added appletSetScreenShotAppletIdentityInfo, appletSetControllerFirmwareUpdateSection, appletSetDesirableKeyboardLayout, appletIsSystemBufferSharingEnabled, appletGetSystemSharedLayerHandle, appletGetSystemSharedBufferHandle, appletSetHandlesRequestToDisplay, appletApproveToDisplay, appletOverrideAutoSleepTimeAndDimmingTime, appletSetIdleTimeDetectionExtension, appletGetIdleTimeDetectionExtension, appletSetInputDetectionSourceSet, appletReportUserIsActive, appletSetAutoSleepDisabled, appletIsAutoSleepDisabled, appletSetWirelessPriorityMode, appletGetProgramTotalActiveTime.
+* **ILibraryAppletSelfAccessor**: Added appletGetMainAppletIdentityInfo, appletGetCallerAppletIdentityInfo, appletGetCallerAppletIdentityInfoStack, appletGetNextReturnDestinationAppletIdentityInfo, appletGetLibraryAppletInfo.
+* **ICommonStateGetter**: Added appletGetCradleStatus, appletGetBootMode, appletRequestToAcquireSleepLock, appletReleaseSleepLock, appletReleaseSleepLockTransiently, appletGetCradleFwVersion, AppletTvPowerStateMatchingMode, appletSetLcdBacklightOffEnabled, appletIsInControllerFirmwareUpdateSection, appletGetDefaultDisplayResolution, appletGetDefaultDisplayResolutionChangeEvent, appletGetHdcpAuthenticationState, appletGetHdcpAuthenticationStateChangeEvent, appletSetTvPowerStateMatchingMode, appletGetApplicationIdByContentActionName, appletPerformSystemButtonPressingIfInFocus, appletSetPerformanceConfigurationChangedNotification, appletGetOperationModeSystemInfo.
+* **IWindowController**: Added appletGetAppletResourceUserIdOfCallerApplet, appletSetAppletWindowVisibility, appletSetAppletGpuTimeSlice.
+* **Added full support for IAudioController**.
+* **IDisplayController**: Added appletUpdateLastForegroundCaptureImage, appletUpdateCallerAppletCaptureImage, appletGetLastForegroundCaptureImageEx, appletGetLastApplicationCaptureImageEx, appletGetCallerAppletCaptureImageEx, appletTakeScreenShotOfOwnLayer, appletCopyBetweenCaptureBuffers, appletClearCaptureBuffer, appletClearAppletTransitionBuffer, appletAcquireLastApplicationCaptureSharedBuffer, appletReleaseLastApplicationCaptureSharedBuffer, appletAcquireLastForegroundCaptureSharedBuffer, appletReleaseLastForegroundCaptureSharedBuffer, appletAcquireCallerAppletCaptureSharedBuffer, appletReleaseCallerAppletCaptureSharedBuffer, appletTakeScreenShotOfOwnLayerEx.
+* **Added full support for IAppletCommonFunctions**.
+* **IHomeMenuFunctions**: Added appletRequestToGetForeground, appletLockForeground, appletUnlockForeground, appletPopFromGeneralChannel, appletGetPopFromGeneralChannelEvent.
+* **IGlobalStateController**: Added appletStartSleepSequence, appletStartShutdownSequence, appletStartRebootSequence, appletIsAutoPowerDownRequested, appletLoadAndApplyIdlePolicySettings, appletNotifyCecSettingsChanged, appletSetDefaultHomeButtonLongPressTime, appletUpdateDefaultDisplayResolution, appletShouldSleepOnBoot, appletGetHdcpAuthenticationFailedEvent.
+* **IOverlayFunctions**: Added appletGetApplicationIdForLogo, appletSetGpuTimeSliceBoost, appletSetAutoSleepTimeAndDimmingTimeEnabled, appletTerminateApplicationAndSetReason, appletSetScreenShotPermissionGlobally, appletStartShutdownSequenceForOverlay, appletStartRebootSequenceForOverlay, appletSetHandlingHomeButtonShortPressedEnabled.
+
+#### graphics
+* Added viDestroyManagedLayer.
+* Added ViPowerState_On_Deprecated to ViPowerState enum.
+* Fixed bug in nvAddressSpaceModify.
+
+#### filesystem
+* Added fsOpenGameCardFileSystem.
+* Added fsReadSaveDataFileSystemExtraDataBySaveDataSpaceId, fsReadSaveDataFileSystemExtraData, fsWriteSaveDataFileSystemExtraData.
+* Added FsSaveDataExtraData struct.
+* Added FsGameCardPartiton, FsSaveDataFlags enums.
+
+#### input
+* Added hidGetSupportedNpadStyleSet, hidsysGetSupportedNpadStyleSetOfCallerApplet.
+
+#### other services
+* **Added UserIdStorage caching support to the account IPC wrappers**: the current account can be read using accountGetPreselectedUser.
+* Added AlbumImageOrientation enum.
+* Renamed accountGetActiveUser to accountGetLastOpenedUser.
+* Corrected name of pdmqryGetServiceSession.
+* Fixed NFC service IPC bugs.
+* Updated PdmPlayEvent's unk_x8 union.
+
+#### miscellaneous
+* Further improvements to overall system stability and other minor adjustments have been made to enhance the user experience.
+
+## Version 2.3.0
+
+#### system
+* **Added xxGetServiceSession functions for most services** (those which already had GetSessionService were renamed to GetServiceSession).
+* Added InfoType, SystemInfoType, TickCountInfo, InitialProcessIdRangeInfo and PhysicalMemoryInfo enums for syscalls.
+
+#### applet
+* **Added 8.0+ web applet functions**: webConfigSetMediaPlayerUi, webReplyGetMediaPlayerAutoClosedByCompletion.
+* **Added 8.0+ software keyboard functions**: swkbdConfigSetUnkFlag, swkbdConfigSetTrigger, swkbdInlineSetChangedStringV2Callback, swkbdInlineSetMovedCursorV2Callback.
+* Added swkbdInlineLaunchForLibraryApplet, swkbdInlineSetDecidedCancelCallback.
+* **Added many new applet command wrappers**, some of which expose functions introduced in more recent system versions: appletQueryApplicationPlayStatisticsByUid, appletGetGpuErrorDetectedSystemEvent, appletGetDisplayVersion, appletBeginBlockingHomeButtonShortAndLongPressed, appletEndBlockingHomeButtonShortAndLongPressed, appletRequestToShutdown, appletRequestToReboot, appletInitializeApplicationCopyrightFrameBuffer, appletSetApplicationCopyrightImage, appletSetApplicationCopyrightVisibility, appletGetPseudoDeviceId, appletSetApplicationAlbumUserData, appletEnterFatalSection, appletLeaveFatalSection, appletSetRestartMessageEnabled, appletSetRequiresCaptureButtonShortPressedMessage, appletSetAlbumImageTakenNotificationEnabled.
+* Added AppletScreenShotPermission enum (now used by appletSetScreenShotPermission).
+* Added AppletNotificationMessage enum, which describes the currently known return values of appletGetMessage.
+* Added AppletHookType_OnRestart, AppletHookType_OnCaptureButtonShortPressed and AppletHookType_OnAlbumImageTaken hook types.
+* Renamed appletSetScreenShotImageOrientation to appletSetAlbumImageOrientation.
+* Moved AppletApplicationPlayStatistics struct to PDM (now it's called PdmApplicationPlayStatistics).
+* Fixed web applet arg passing code to actually use 6.0+ format on 6.0+.
+* Fixed appletQueryApplicationPlayStatistics.
+
+#### filesystem
+* Added fsdevCreateFile, fsdevDeleteDirectoryRecursively, fsdevGetLastResult.
+* Added fsOpenFileSystemWithPatch, fsOpenContentStorageFileSystem, fsGetRightsIdByPath, fsGetRightsIdAndKeyGenerationByPath, fsCreateSaveDataFileSystemBySystemSaveDataId, fsDeleteSaveDataFileSystemBySaveDataSpaceId, fsDisableAutoSaveDataCreation, fsCreate_SystemSaveDataWithOwner, fsCreate_SystemSaveData.
+* Added fsFileOperateRange, fsStorageOperateRange.
+* Added option parameter to fsFileRead, fsFileWrite.
+* Added romfsMountFromCurrentProcess.
+* Added FsBisStorageId, FsFileCreateFlags, FsReadOption, FsWriteOption and FsOperationId enums.
+* Added FS_DIROPEN_NO_FILE_SIZE to FsDirectoryFlags enum.
+* Added FsRangeInfo struct.
+* Fixed romfs unmount corruption.
+* Fixed IPC fail in fsFsCreateFile.
+
+#### input
+* **Added partial support for SevenSixAxisSensor**.
+* **Added hid:dbg service support (virtual HID controllers)**.
+* Added hid commands: hidGetControllerDeviceType, hidGetControllerFlags, hidGetControllerPowerInfo.
+* Added hid:sys commands: hidsysGetUniquePadSerialNumber.
+* Fixed bug in irsGetIrCameraHandle.
+* Fixed IPC fail in hidsysSetNotificationLedPattern.
+
+#### other services
+* Added pm:bm service support.
+* Added pdm:qry service support.
+* Added i2c commands: i2csessionReceiveAuto, i2csessionExecuteCommandList.
+* Added ncm commands: ncmContentMetaDatabaseGetAttributes.
+* Added NcmContentMetaType and NcmContentMetaAttributa enums.
+* Added pm:shell commands: pmshellBoostSystemThreadResourceLimit.
+* Added set:sys commands: setsysGetDeviceNickname, setsysSetDeviceNickname.
+* Added time commands: timeGetDeviceLocationName, timeSetDeviceLocationName, timeGetTotalLocationNameCount, timeLoadLocationNameList, timeLoadTimeZoneRule, timeToPosixTime, timeToPosixTimeWithMyRule, timeToCalendarTime.
+* Added and corrected several /dev/nvhost-ctrl-gpu ioctls.
+* Added nvGpuGetZcullInfo, nvGpuGetTpcMasks, nvGpuZbcGetActiveSlotMask, nvGpuZbcAddColor, nvGpuZbcAddDepth.
+* Improved I2cDevice enum.
+* Improved accountInitialize to internally call InitializeApplicationInfo.
+* Changed binderInitSession to accept an arbitrary relay session handle.
+* Renamed PdmAccountEvent::eventType to type.
+* Corrected names of several spl functions: splSetBootReason, splGetBootReason.
+* Corrected ro service initialization code.
+* Corrected bug in internal USB IPC code.
+* Corrected bug in binderInitSession.
+* Corrected bug in parcelReadData.
+* Corrected bug in viInitialize when using Manager/System.
+
+#### miscellaneous
+* Further improvements to overall system stability and other minor adjustments to enhance the user experience.
+
+## Version 2.2.0
+
+#### system
+* **Introduced hardware accelerated cryptography API**, including support for:
+  * Hardware accelerated AES-128/AES-192/AES-256 with single-block ECB and multi-block CBC/CTR/XTS modes
+  * Hardware accelerated SHA-1/SHA-256
+  * Hardware accelerated AES-128-CMAC/AES-192-CMAC/AES-256-CMAC
+  * Hardware accelerated HMAC-SHA1/HMAC-SHA256
+* Added a custom MOD0 extension to make it easier to locate the got section.
+* Added syscall: svcQueryProcessMemory.
+* Improved smInitialize robustness during early system initialization in order to avoid race conditions when SM itself hasn't fully started up.
+* **Fixed TLS slot issue on 8.0.0 - please recompile all your homebrew applications with this libnx release in order to fix crashes on 8.0.0.**
+
+#### applet
+* **Added support for VR mode, available on 6.0.0+**:
+  * Added appletIsVrModeEnabled (3.0.0+) and appletSetVrModeEnabled.
+* **Added support for CPU boost, available on 7.0.0+**:
+  * Added appletSetCpuBoostMode and appletGetCurrentPerformanceConfiguration.
+* **Added support for the light sensor, available on 3.0.0+**:
+  * appletGetCurrentIlluminance, appletGetCurrentIlluminanceEx (5.0.0+) and appletIsIlluminanceAvailable.
+* Added support for the pctlauth library applet.
+* Added libappletStart and libappletLaunch.
+* Updated swkbd support with new functionality present in 6.0.0+, and added accessor functions for the SwkbdConfig struct:
+  * Added swkbdConfigSetType, swkbdConfigSetDicFlag, swkbdConfigSetKeySetDisableBitmask, swkbdConfigSetInitialCursorPos, swkbdConfigSetStringLenMax, swkbdConfigSetStringLenMaxExt, swkbdConfigSetPasswordFlag, swkbdConfigSetTextDrawType, swkbdConfigSetReturnButtonFlag, swkbdConfigSetBlurBackground and swkbdConfigSetTextGrouping.
+  * Added swkbdInlineAppearEx, swkbdInlineSetCustomizedDictionaries and swkbdInlineUnsetCustomizedDictionaries.
+  * Users are advised to use the new accessor functions and stop manipulating directly the contents of the SwkbdConfig struct.
+* Updated web support with new functionality present in 6.0.0+:
+  * Added webConfigSetMediaAutoPlay, webConfigSetMediaPlayerSpeedControl, webConfigAddAlbumEntryAndMediaData, webConfigSetBootFooterButtonVisible, webConfigSetOverrideWebAudioVolume and webConfigSetOverrideMediaAudioVolume.
+
+#### filesystem
+* Added romfsMountFromFsdev.
+* Added fsdevTranslatePath.
+* Updated FsSave/FsSaveDataInfo structures.
+* Fixed leakage of `0x402` error codes (now they get converted to `EEXIST`).
+
+#### hid
+* **Added support for the HOME-button notification LED, available on 7.0.0+**:
+  * Added NotificationLed struct for describing LED patterns.
+  * Added hidsysSetNotificationLedPattern.
+* Added hidsysGetUniquePadsFromNpad and hidsysGetUniquePadIds.
+
+#### other services
+* Added clkrst service wrappers.
+* Added pctl service wrappers.
+* Added ro:1 service wrappers.
+* Added ldr:ro command: ldrRoLoadNrrEx.
+* Improved pcv support for 8.0.0 changes:
+  * Added PcvModuleId enum.
+  * Added pcvGetModuleId for converting PcvModule to PcvModuleId.
+  * Added checks to avoid calling pcv commands removed in 8.0.0 (use clkrst instead).
+* Fixed LoaderModuleInfo struct.
+* Fixed signature of roDmntGetModuleInfos and ldrDmntGetModuleInfos.
+* Fixed signature of splCryptoCryptAesCtr.
+* Removed `apm:p` service support in order to support 8.0.0.
+
+#### miscellaneous
+* Further improvements to overall system stability and other minor adjustments to enhance the user experience.
+
+## Version 2.1.0
+
+#### system
+* **Introduced support for POSIX threads (pthreads) and C++ `std::thread` APIs**, with the help of devkitA64 r13.
+* **Introduced hosversion API**, which replaces the old kernelAbove*X* functions for nearly all use cases. By default HOS version is sourced from set:sys during app startup if available. **Make sure to call hosversionSet with appropriately sourced system version information if you are overriding `__appInit`**.
+* Added support for TLS slots.
+* Homebrew now embeds the module name at the beginning of rodata. This allows Atmosphère to display the proper name of homebrew executable modules in crash reports and in other locations.
+* Added detectJitKernelPatch, detectIgnoreJitKernelPatch and detectKernelVersion.
+* Corrected definition of svcSleepThread.
+* Optimized implementation of the Barrier and RwLock synchronization primitives.
+
+#### applet
+* **Added support for SwkbdInline.**
+* **Added support for the WifiWebAuth, Web, WebOffline, WebShare and WebLobby library applets**. Please note that using some of these applets requires Atmosphère 0.8.6 or higher.
+* **Added support for the Error library applet.**
+* Added appletHolderActive, appletHolderCheckFinished and appletHolderRequestExit.
+* Added appletQueryApplicationPlayStatistics.
+* Added appletRequestLaunchApplication and appletRequestLaunchApplicationForQuest.
+* Added appletBeginToWatchShortHomeButtonMessage, appletEndToWatchShortHomeButtonMessage and appletHomeButtonReaderLockAccessorGetEvent.
+* Added appletGetMessage and appletProcessMessage. appletMainLoop is now a wrapper for these two.
+* Added libappletReadStorage and libappletPopOutData.
+* Added libappletCreateWriteStorage (previously it was an internal function).
+
+#### filesystem
+* **Refactored romfs device to support multiple romfs mounts in a sane way**.
+* Added fsOpenDataStorageByDataId.
+* Added romfsMountFromDataArchive.
+
+#### graphics
+* **Legacy deprecated gfx API has been removed**.
+* Fixed bug that would return unusable default NWindow dimensions on 1.x.
+* Corrected mistakes in NvColorFormat enum.
+* Added vi commands: viGetIndirectLayerImageMap, viGetIndirectLayerImageRequiredMemoryInfo.
+* Fixed stray layer creation on 7.0.0+.
+
+#### hid
+* Introduced `touchPosition::id` to allow multi-touch support to be usable.
+* Added hidMouseMultiRead.
+* Added hidControllerIDToOfficial and hidControllerIDFromOfficial (previously they were internal functions).
+* Added hid:sys service wrappers.
+* Changed types for fields in MousePosition to s32.
+
+#### network
+* Added wlan:inf service wrappers.
+* Added nifm commands: nifmIsWirelessCommunicationEnabled, nifmIsEthernetCommunicationEnabled, nifmIsAnyForegroundRequestAccepted, nifmPutToSleep, nifmWakeUp, nifmGetInternetConnectionStatus.
+* Added nifm:a/nifm:s command: nifmSetWirelessCommunicationEnabled.
+* Added nifmSetServiceType, which allows selecting the privilege level of the nifm service (nifm:u/nifm:s/nifm:a).
+* Fixed definition of struct ifreq's ifr_flags/ifr_flagshigh fields.
+* Fixed IPC bug in bsdRead.
+* Corrected nxlinkStdio to return the socket fd instead of zero on success, allowing for it to be closed later on.
+
+#### other services
+* Added caps:sc/caps:su service wrappers.
+* Added nfp:user service wrappers.
+* Added lbl commands: lblSetCurrentBrightnessSetting, lblGetCurrentBrightnessSetting, lblEnableAutoBrightnessControl, lblDisableAutoBrightnessControl, lblIsAutoBrightnessControlEnabled.
+* Added pmdmntGetServiceSession for retrieving the pm:dmnt session.
+* Renamed usbDsEndpoint_StallCtrl to usbDsEndpoint_Stall.
+
+#### miscellaneous
+* Further improvements to overall system stability and other minor adjustments to enhance the user experience.
+
 ## Version 2.0.0
 
 #### system
@@ -343,7 +673,7 @@
 * Added nsGetApplicationControlData. Imported nacp.h from nx-hbmenu with adjustments.
 * Add ipcAddSendSmart, ipcAddRecvSmart, use where applicable
 * Audio input implementation and audio output fixes.
-* add portlibs bin folder to path 
+* add portlibs bin folder to path
 
 #### miscellaneous
 * Detect 5.0.0 properly.
@@ -356,7 +686,7 @@
 * Added nacpGetLanguageEntry and SetLanguage_Total.
 * [irs] Name image transfer config variables
 * Further improvements to overall system stability and other minor adjustments to enhance the user experience.
- 
+
 ## Version 1.1.0
 
 * Fixed a race condition in HID causing sporadic incorrect key-releases when using hidKeysHeld().

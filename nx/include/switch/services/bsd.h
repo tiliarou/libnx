@@ -1,6 +1,6 @@
 /**
  * @file bsd.h
- * @brief BSD sockets (bsd:u/s) service IPC wrapper. Please use socket.c instead.
+ * @brief BSD sockets (bsd:u/s) service IPC wrapper. Please use the standard <sys/socket.h> interface instead.
  * @author plutoo
  * @author TuxSH
  * @copyright libnx Authors
@@ -12,10 +12,11 @@
 
 #include "../types.h"
 #include "../kernel/tmem.h"
+#include "../sf/service.h"
 
 /// Configuration structure for bsdInitalize
 typedef struct  {
-    u32 version;                ///< Observed 1 on 2.0 LibAppletWeb, 2 on 3.0.
+    u32 version;                ///< Observed 1 on [2.0.0+] LibAppletWeb, 2 on [3.0.0+].
 
     u32 tcp_tx_buf_size;        ///< Size of the TCP transfer (send) buffer (initial or fixed).
     u32 tcp_rx_buf_size;        ///< Size of the TCP recieve buffer (initial or fixed).
@@ -33,10 +34,15 @@ extern __thread int g_bsdErrno;        ///< Last errno, per-thread
 
 /// Fetch the default configuration for bsdInitialize.
 const BsdInitConfig *bsdGetDefaultInitConfig(void);
+
 /// Initialize the BSD service.
-Result bsdInitialize(const BsdInitConfig *config);
-/// Deinitialize the BSD service.
+Result bsdInitialize(const BsdInitConfig *config, u32 num_sessions, u32 service_type);
+
+/// Exit the BSD service.
 void bsdExit(void);
+
+/// Gets the Service object for the actual BSD service session.
+Service* bsdGetServiceSession(void);
 
 /// Creates a socket.
 int bsdSocket(int domain, int type, int protocol);
@@ -71,8 +77,3 @@ int bsdClose(int fd);
 int bsdDuplicateSocket(int sockfd);
 
 // TODO: Reverse-engineer GetResourceStatistics. Implement sendmmsg/recvmmsg (custom (un)serialization)
-
-/// Initialize the BSD service using the default configuration.
-static inline Result bsdInitializeDefault(void) {
-    return bsdInitialize(bsdGetDefaultInitConfig());
-}

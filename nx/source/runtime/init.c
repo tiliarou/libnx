@@ -17,6 +17,7 @@ void virtmemSetup(void);
 void newlibSetup(void);
 void argvSetup(void);
 void __libnx_init_time(void);
+void __libnx_init_cwd(void);
 
 extern u32 __nx_applet_type;
 
@@ -72,8 +73,8 @@ void __attribute__((weak)) __libnx_initheap(void)
     }
     else {
         if (__nx_heap_size==0) {
-            svcGetInfo(&mem_available, 6, CUR_PROCESS_HANDLE, 0);
-            svcGetInfo(&mem_used, 7, CUR_PROCESS_HANDLE, 0);
+            svcGetInfo(&mem_available, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+            svcGetInfo(&mem_used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
             if (mem_available > mem_used+0x200000)
                 size = (mem_available - mem_used - 0x200000) & ~0x1FFFFF;
             if (size==0)
@@ -86,7 +87,7 @@ void __attribute__((weak)) __libnx_initheap(void)
         Result rc = svcSetHeapSize(&addr, size);
 
         if (R_FAILED(rc))
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_HeapAllocFailed));
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_HeapAllocFailed));
     }
 
     // Newlib
@@ -107,38 +108,41 @@ void __attribute__((weak)) __appInit(void)
     // Initialize default services.
     rc = smInitialize();
     if (R_FAILED(rc))
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
+        fatalThrow(MAKERESULT(Module_Libnx, LibnxError_InitFail_SM));
 
-    rc = setsysInitialize();
-    if (R_SUCCEEDED(rc)) {
-        SetSysFirmwareVersion fw;
-        rc = setsysGetFirmwareVersion(&fw);
-        if (R_SUCCEEDED(rc))
-            hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
-        setsysExit();
+    if (hosversionGet() == 0) {
+        rc = setsysInitialize();
+        if (R_SUCCEEDED(rc)) {
+            SetSysFirmwareVersion fw;
+            rc = setsysGetFirmwareVersion(&fw);
+            if (R_SUCCEEDED(rc))
+                hosversionSet(MAKEHOSVERSION(fw.major, fw.minor, fw.micro));
+            setsysExit();
+        }
     }
 
     rc = appletInitialize();
     if (R_FAILED(rc))
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_AM));
+        fatalThrow(MAKERESULT(Module_Libnx, LibnxError_InitFail_AM));
 
     if (__nx_applet_type != AppletType_None) {
         rc = hidInitialize();
         if (R_FAILED(rc))
-            fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_HID));
+            fatalThrow(MAKERESULT(Module_Libnx, LibnxError_InitFail_HID));
     }
 
     rc = timeInitialize();
     if (R_FAILED(rc))
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_Time));
+        fatalThrow(MAKERESULT(Module_Libnx, LibnxError_InitFail_Time));
 
     __libnx_init_time();
 
     rc = fsInitialize();
     if (R_FAILED(rc))
-        fatalSimple(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
+        fatalThrow(MAKERESULT(Module_Libnx, LibnxError_InitFail_FS));
 
     fsdevMountSdmc();
+    __libnx_init_cwd();
 
     if (&__nx_win_init) __nx_win_init();
     if (&userAppInit) userAppInit();

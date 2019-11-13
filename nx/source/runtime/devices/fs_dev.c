@@ -7,11 +7,14 @@
 #include <sys/iosupport.h>
 #include <sys/param.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "runtime/devices/fs_dev.h"
 #include "runtime/util/utf.h"
-#include "services/fs.h"
+#include "runtime/env.h"
+#include "services/time.h"
 
+#include "path_buf.h"
 
 /*! @internal
  *
@@ -59,7 +62,7 @@ typedef struct
 } fsdev_file_t;
 
 /*! fsdev devoptab */
-static devoptab_t
+static const devoptab_t
 fsdev_devoptab =
 {
   .structSize   = sizeof(fsdev_file_t),
@@ -91,22 +94,25 @@ fsdev_devoptab =
 
 typedef struct
 {
-    bool setup;
-    s32 id;
-    devoptab_t device;
-    FsFileSystem fs;
-    char name[32];
+  bool setup;
+  s32 id;
+  devoptab_t device;
+  FsFileSystem fs;
+  char *cwd;
+  char name[32];
 } fsdev_fsdevice;
 
 static bool fsdev_initialised = false;
-static s32 fsdev_fsdevice_default = -1;
-static s32 fsdev_fsdevice_cwd = -1;
+static s32 fsdev_fsdevice_cwd;
+static __thread Result fsdev_last_result = 0;
 static fsdev_fsdevice fsdev_fsdevices[32];
 
 /*! @endcond */
 
-static char     __cwd[PATH_MAX+1] = "/";
-static __thread char     __fixedpath[PATH_MAX+1];
+_Static_assert((PATH_MAX+1) >= FS_MAX_PATH, "PATH_MAX is too small");
+
+__attribute__((weak)) u32 __nx_fsdev_direntry_cache_size = 32;
+__attribute__((weak)) bool __nx_fsdev_support_cwd = true;
 
 static fsdev_fsdevice *fsdevFindDevice(const char *name)
 {
@@ -116,18 +122,6 @@ static fsdev_fsdevice *fsdevFindDevice(const char *name)
 
   if(!fsdev_initialised)
     return NULL;
-
-  if(name && name[0] == '/') //Return the default device.
-  {
-    if(fsdev_fsdevice_default==-1)
-      return NULL;
-
-    device = &fsdev_fsdevices[fsdev_fsdevice_default];
-    if(!device->setup)
-      device = NULL;
-
-    return device;
-  }
 
   for(i=0; i<total; i++)
   {
@@ -140,7 +134,8 @@ static fsdev_fsdevice *fsdevFindDevice(const char *name)
     }
     else if(device->setup) //Find the device with the input name.
     {
-      if(strncmp(device->name, name, strlen(device->name))==0)
+      size_t devnamelen = strlen(device->name);
+      if(strncmp(device->name, name, devnamelen)==0 && (name[devnamelen]=='\0' || name[devnamelen]==':'))
         return device;
     }
   }
@@ -196,42 +191,40 @@ fsdev_fixpath(struct _reent *r,
     p += units;
   } while(code != 0);
 
-  if(path[0] == '/')
-    strncpy(__fixedpath, path, PATH_MAX);
-  else
+  fsdev_fsdevice *dev = NULL;
+  if(device && *device != NULL)
+    dev = *device;
+  else if(path != device_path)
+    dev = fsdevFindDevice(device_path);
+  else if(fsdev_fsdevice_cwd != -1)
+    dev = &fsdev_fsdevices[fsdev_fsdevice_cwd];
+  if(dev == NULL)
   {
-    strncpy(__fixedpath, __cwd, PATH_MAX);
-    __fixedpath[PATH_MAX] = '\0';
-    strncat(__fixedpath, path, PATH_MAX - strlen(__cwd));
+    r->_errno = ENODEV;
+    return NULL;
   }
 
-  if(__fixedpath[PATH_MAX] != 0)
+  if(path[0] == '/')
+    strncpy(__nx_dev_path_buf, path, PATH_MAX);
+  else
   {
-    __fixedpath[PATH_MAX] = 0;
+    const char* cwd = dev->cwd ? dev->cwd : "/";
+    strncpy(__nx_dev_path_buf, cwd, PATH_MAX);
+    __nx_dev_path_buf[PATH_MAX] = '\0';
+    strncat(__nx_dev_path_buf, path, PATH_MAX - strlen(cwd));
+  }
+
+  if(__nx_dev_path_buf[PATH_MAX] != 0)
+  {
+    __nx_dev_path_buf[PATH_MAX] = 0;
     r->_errno = ENAMETOOLONG;
     return NULL;
   }
 
   if(device)
-  {
-    if(path[0] == '/')
-    {
-      *device = fsdevFindDevice(device_path);
-    }
-    else
-    {
-      *device = NULL;
-      if(fsdev_fsdevice_cwd != -1)
-        *device = &fsdev_fsdevices[fsdev_fsdevice_cwd];
-    }
-    if(*device == NULL)
-    {
-      r->_errno = ENODEV;
-      return NULL;
-    }
-  }
+    *device = dev;
 
-  return __fixedpath;
+  return __nx_dev_path_buf;
 }
 
 static int
@@ -243,7 +236,8 @@ fsdev_getfspath(struct _reent *r,
   if(fsdev_fixpath(r, path, device) == NULL)
     return -1;
 
-  memcpy(outpath, __fixedpath,FS_MAX_PATH-1);
+  if(outpath != __nx_dev_path_buf)
+    memcpy(outpath, __nx_dev_path_buf, FS_MAX_PATH-1);
   outpath[FS_MAX_PATH-1] = '\0';
 
   return 0;
@@ -251,8 +245,33 @@ fsdev_getfspath(struct _reent *r,
 
 static ssize_t fsdev_convertfromfspath(uint8_t *out, uint8_t *in, size_t len)
 {
-  strncpy((char*)out, (char*)in, len);
-  return strnlen((char*)out, len);
+  ssize_t inlen = strnlen((char*)in, len);
+  memcpy(out, in, inlen);
+  if (inlen < len)
+    out[inlen+1] = 0;
+  return inlen;
+}
+
+static time_t fsdev_converttimetoutc(u64 timestamp)
+{
+  // Parse timestamp into y/m/d h:m:s
+  time_t posixtime = (time_t)timestamp;
+  struct tm *t = gmtime(&posixtime);
+
+  // Convert time/date into an actual UTC POSIX timestamp using the system's timezone rules
+  TimeCalendarTime caltime;
+  caltime.year   = 1900 + t->tm_year;
+  caltime.month  = 1 + t->tm_mon;
+  caltime.day    = t->tm_mday;
+  caltime.hour   = t->tm_hour;
+  caltime.minute = t->tm_min;
+  caltime.second = t->tm_sec;
+  u64 new_timestamp;
+  Result rc = timeToPosixTimeWithMyRule(&caltime, &new_timestamp, 1, NULL);
+  if (R_SUCCEEDED(rc))
+    posixtime = (time_t)new_timestamp;
+
+  return posixtime;
 }
 
 extern int __system_argc;
@@ -271,10 +290,12 @@ static void _fsdevInit(void)
     {
       memcpy(&fsdev_fsdevices[i].device, &fsdev_devoptab, sizeof(fsdev_devoptab));
       fsdev_fsdevices[i].device.name = fsdev_fsdevices[i].name;
+      fsdev_fsdevices[i].device.dirStateSize += sizeof(FsDirectoryEntry)*__nx_fsdev_direntry_cache_size;
+      fsdev_fsdevices[i].device.deviceData = &fsdev_fsdevices[i];
       fsdev_fsdevices[i].id = i;
     }
 
-    fsdev_fsdevice_default = -1;
+    fsdev_fsdevice_cwd = -1;
     fsdev_initialised = true;
   }
 }
@@ -284,18 +305,13 @@ static int _fsdevMountDevice(const char *name, FsFileSystem fs, fsdev_fsdevice *
   fsdev_fsdevice *device = NULL;
 
   if(fsdevFindDevice(name)) //Device is already mounted with the same name.
-  {
-    fsFsClose(&fs);
-    return -1;
-  }
+    goto _fail;
 
   _fsdevInit(); //Ensure fsdev is initialized
+
   device = fsdevFindDevice(NULL);
   if(device==NULL)
-  {
-    fsFsClose(&fs);
-    return -1;
-  }
+    goto _fail;
 
   device->fs = fs;
   memset(device->name, 0, sizeof(device->name));
@@ -303,17 +319,31 @@ static int _fsdevMountDevice(const char *name, FsFileSystem fs, fsdev_fsdevice *
 
   int dev = AddDevice(&device->device);
   if(dev==-1)
-  {
-    fsFsClose(&device->fs);
-    return dev;
-  }
+    goto _fail;
 
   device->setup = 1;
+  device->cwd = __nx_fsdev_support_cwd ? malloc(FS_MAX_PATH) : NULL;
+  if(device->cwd!=NULL)
+  {
+    device->cwd[0] = '/';
+    device->cwd[1] = '\0';
+  }
+
+  if(fsdev_fsdevice_cwd==-1)
+    fsdev_fsdevice_cwd = device->id;
+
+  const devoptab_t *default_dev = GetDeviceOpTab("");
+  if(default_dev==NULL || strcmp(default_dev->name, "stdnull")==0)
+    setDefaultDevice(dev);
 
   if(out_device)
     *out_device = device;
 
   return dev;
+
+_fail:
+  fsFsClose(&fs);
+  return -1;
 }
 
 int fsdevMountDevice(const char *name, FsFileSystem fs)
@@ -333,13 +363,11 @@ static int _fsdevUnmountDeviceStruct(fsdev_fsdevice *device)
   strncat(name, ":", sizeof(name)-strlen(name)-1);
 
   RemoveDevice(name);
+  free(device->cwd);
   fsFsClose(&device->fs);
 
-  if(device->id == fsdev_fsdevice_default)
-    fsdev_fsdevice_default = -1;
-
   if(device->id == fsdev_fsdevice_cwd)
-    fsdev_fsdevice_cwd = fsdev_fsdevice_default;
+    fsdev_fsdevice_cwd = -1;
 
   device->setup = 0;
   memset(device->name, 0, sizeof(device->name));
@@ -370,7 +398,7 @@ Result fsdevCommitDevice(const char *name)
 }
 
 Result fsdevSetArchiveBit(const char *path) {
-  char          fs_path[FS_MAX_PATH];
+  char           *fs_path = __nx_dev_path_buf;
   fsdev_fsdevice *device = NULL;
 
   if(fsdev_getfspath(_REENT, path, &device, fs_path)==-1)
@@ -379,73 +407,96 @@ Result fsdevSetArchiveBit(const char *path) {
   return fsFsSetArchiveBit(&device->fs, fs_path);
 }
 
+Result fsdevCreateFile(const char* path, size_t size, u32 flags) {
+  char           *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = NULL;
+
+  if(fsdev_getfspath(_REENT, path, &device, fs_path)==-1)
+    return MAKERESULT(Module_Libnx, LibnxError_NotFound);
+
+  return fsFsCreateFile(&device->fs, fs_path, size, flags);
+}
+
+Result fsdevDeleteDirectoryRecursively(const char *path) {
+  char           *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = NULL;
+
+  if(fsdev_getfspath(_REENT, path, &device, fs_path)==-1)
+    return MAKERESULT(Module_Libnx, LibnxError_NotFound);
+
+  return fsFsDeleteDirectoryRecursively(&device->fs, fs_path);
+}
+
 /*! Initialize SDMC device */
 Result fsdevMountSdmc(void)
 {
-  ssize_t  units;
-  uint32_t code;
-  char     *p;
-  Result   rc = 0;
   FsFileSystem fs;
-  fsdev_fsdevice *device = NULL;
-
-  if(fsdevFindDevice("sdmc"))
-    return 0;
-
-  rc = fsMountSdcard(&fs);
+  Result rc = fsOpenSdCardFileSystem(&fs);
   if(R_SUCCEEDED(rc))
   {
-    int dev = _fsdevMountDevice("sdmc", fs, &device);
-
-    if(dev != -1)
-    {
-      setDefaultDevice(dev);
-      if(device)
-      {
-        fsdev_fsdevice_default = device->id;
-        fsdev_fsdevice_cwd = fsdev_fsdevice_default;
-      }
-
-      if(__system_argc != 0 && __system_argv[0] != NULL)
-      {
-        if(FindDevice(__system_argv[0]) == dev)
-        {
-          strncpy(__fixedpath,__system_argv[0],PATH_MAX);
-          if(__fixedpath[PATH_MAX] != 0)
-          {
-            __fixedpath[PATH_MAX] = 0;
-          }
-          else
-          {
-            char *last_slash = NULL;
-            p = __fixedpath;
-            do
-            {
-              units = decode_utf8(&code, (const uint8_t*)p);
-              if(units < 0)
-              {
-                last_slash = NULL;
-                break;
-              }
-
-              if(code == '/')
-                last_slash = p;
-
-              p += units;
-            } while(code != 0);
-
-            if(last_slash != NULL)
-            {
-              last_slash[0] = 0;
-              chdir(__fixedpath);
-            }
-          }
-        }
-      }
-    }
+    int ret = fsdevMountDevice("sdmc", fs);
+    if(ret==-1)
+      rc = MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
   }
 
   return rc;
+}
+
+Result fsdevMountSaveData(const char *name, u64 program_id, AccountUid uid)
+{
+  FsFileSystem fs;
+  Result rc = fsOpen_SaveData(&fs, program_id, uid);
+  if(R_SUCCEEDED(rc))
+  {
+    int ret = fsdevMountDevice(name, fs);
+    if(ret==-1)
+      rc = MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+  }
+  return rc;
+}
+
+Result fsdevMountSystemSaveData(const char *name, FsSaveDataSpaceId saveDataSpaceId, u64 saveID, AccountUid uid)
+{
+  FsFileSystem fs;
+  Result rc = fsOpen_SystemSaveData(&fs, saveDataSpaceId, saveID, uid);
+  if(R_SUCCEEDED(rc))
+  {
+    int ret = fsdevMountDevice(name, fs);
+    if(ret==-1)
+      rc = MAKERESULT(Module_Libnx, LibnxError_OutOfMemory);
+  }
+  return rc;
+}
+
+void __libnx_init_cwd(void)
+{
+  if(envIsNso() || __system_argc==0 || __system_argv[0] == NULL)
+    return;
+
+  char *last_slash = NULL;
+  char *p = __system_argv[0];
+  uint32_t code;
+  do
+  {
+    ssize_t units = decode_utf8(&code, (const uint8_t*)p);
+    if(units < 0)
+    {
+      last_slash = NULL;
+      break;
+    }
+
+    if(code == '/')
+      last_slash = p;
+
+    p += units;
+  } while(code != 0);
+
+  if(last_slash != NULL)
+  {
+    last_slash[0] = 0;
+    chdir(__system_argv[0]);
+    last_slash[0] = '/';
+  }
 }
 
 /*! Clean up fsdev devices */
@@ -478,12 +529,15 @@ FsFileSystem* fsdevGetDeviceFileSystem(const char *name)
   return &device->fs;
 }
 
-FsFileSystem* fsdevGetDefaultFileSystem(void)
+int fsdevTranslatePath(const char *path, FsFileSystem** device, char *outpath)
 {
-  if(!fsdev_initialised) return NULL;
-  if(fsdev_fsdevice_default==-1) return NULL;
+  fsdev_fsdevice *tmpdev = NULL;
 
-  return &fsdev_fsdevices[fsdev_fsdevice_default].fs;
+  int ret = fsdev_getfspath(_REENT, path, &tmpdev, outpath);
+  if(ret==-1)return ret;
+
+  if(device)*device = &tmpdev->fs;
+  return ret;
 }
 
 /*! Open a file
@@ -508,8 +562,8 @@ fsdev_open(struct _reent *r,
   Result        rc;
   u32           fsdev_flags = 0;
   u32           attributes = 0;
-  char          fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char         *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
 
   if(fsdev_getfspath(r, path, &device, fs_path)==-1)
     return -1;
@@ -522,7 +576,7 @@ fsdev_open(struct _reent *r,
   {
     /* read-only: do not allow O_APPEND */
     case O_RDONLY:
-      fsdev_flags |= FS_OPEN_READ;
+      fsdev_flags |= FsOpenMode_Read;
       if(flags & O_APPEND)
       {
         r->_errno = EINVAL;
@@ -532,12 +586,12 @@ fsdev_open(struct _reent *r,
 
     /* write-only */
     case O_WRONLY:
-      fsdev_flags |= FS_OPEN_WRITE | FS_OPEN_APPEND;
+      fsdev_flags |= FsOpenMode_Write | FsOpenMode_Append;
       break;
 
     /* read and write */
     case O_RDWR:
-      fsdev_flags |= (FS_OPEN_READ | FS_OPEN_WRITE | FS_OPEN_APPEND);
+      fsdev_flags |= (FsOpenMode_Read | FsOpenMode_Write | FsOpenMode_Append);
       break;
 
     /* an invalid option was supplied */
@@ -657,7 +711,7 @@ fsdev_write(struct _reent *r,
     }
   }
 
-  rc = fsFileWrite(&file->fd, file->offset, ptr, len);
+  rc = fsFileWrite(&file->fd, file->offset, ptr, len, FsWriteOption_None);
   if(rc == 0xD401)
     return fsdev_write_safe(r, fd, ptr, len);
   if(R_FAILED(rc))
@@ -700,7 +754,7 @@ fsdev_write_safe(struct _reent *r,
   /* Copy to internal buffer and transfer in chunks.
    * You cannot use FS read/write with certain memory.
    */
-  static __thread char tmp_buffer[8192];
+  char tmp_buffer[0x1000];
   while(len > 0)
   {
     size_t toWrite = len;
@@ -711,7 +765,7 @@ fsdev_write_safe(struct _reent *r,
     memcpy(tmp_buffer, ptr, toWrite);
 
     /* write the data */
-    rc = fsFileWrite(&file->fd, file->offset, tmp_buffer, toWrite);
+    rc = fsFileWrite(&file->fd, file->offset, tmp_buffer, toWrite, FsWriteOption_None);
 
     if(R_FAILED(rc))
     {
@@ -753,7 +807,7 @@ fsdev_read(struct _reent *r,
           size_t         len)
 {
   Result      rc;
-  size_t      bytes;
+  u64         bytes;
 
   /* get pointer to our data */
   fsdev_file_t *file = (fsdev_file_t*)fd;
@@ -766,7 +820,7 @@ fsdev_read(struct _reent *r,
   }
 
   /* read the data */
-  rc = fsFileRead(&file->fd, file->offset, ptr, len, &bytes);
+  rc = fsFileRead(&file->fd, file->offset, ptr, len, FsReadOption_None, &bytes);
   if(rc == 0xD401)
     return fsdev_read_safe(r, fd, ptr, len);
   if(R_SUCCEEDED(rc))
@@ -797,7 +851,7 @@ fsdev_read_safe(struct _reent *r,
                 size_t        len)
 {
   Result      rc;
-  size_t      bytesRead = 0, bytes = 0;
+  u64         bytesRead = 0, bytes = 0;
 
   /* get pointer to our data */
   fsdev_file_t *file = (fsdev_file_t*)fd;
@@ -805,15 +859,15 @@ fsdev_read_safe(struct _reent *r,
   /* Transfer in chunks with internal buffer.
    * You cannot use FS read/write with certain memory.
    */
-  static __thread char tmp_buffer[8192];
+  char tmp_buffer[0x1000];
   while(len > 0)
   {
-    size_t toRead = len;
+    u64 toRead = len;
     if(toRead > sizeof(tmp_buffer))
       toRead = sizeof(tmp_buffer);
 
     /* read the data */
-    rc = fsFileRead(&file->fd, file->offset, tmp_buffer, toRead, &bytes);
+    rc = fsFileRead(&file->fd, file->offset, tmp_buffer, toRead, FsReadOption_None, &bytes);
 
     if(bytes > toRead)
       bytes = toRead;
@@ -932,9 +986,9 @@ fsdev_fstat(struct _reent *r,
 
     if(file->timestamps.is_valid)
     {
-      st->st_ctime = file->timestamps.created;
-      st->st_mtime = file->timestamps.modified;
-      st->st_atime = file->timestamps.accessed;
+      st->st_ctime = fsdev_converttimetoutc(file->timestamps.created);
+      st->st_mtime = fsdev_converttimetoutc(file->timestamps.modified);
+      st->st_atime = fsdev_converttimetoutc(file->timestamps.accessed);
     }
 
     return 0;
@@ -962,10 +1016,10 @@ fsdev_stat(struct _reent *r,
   FsDir   fdir;
   Result  rc;
   int     ret=0;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
   FsTimeStampRaw timestamps = {0};
-  FsEntryType type;
+  FsDirEntryType type;
 
   if(fsdev_getfspath(r, file, &device, fs_path)==-1)
     return -1;
@@ -973,9 +1027,9 @@ fsdev_stat(struct _reent *r,
   rc = fsFsGetEntryType(&device->fs, fs_path, &type);
   if(R_SUCCEEDED(rc))
   {
-    if(type == ENTRYTYPE_DIR)
+    if(type == FsDirEntryType_Dir)
     {
-      if(R_SUCCEEDED(rc = fsFsOpenDirectory(&device->fs, fs_path, FS_DIROPEN_DIRECTORY | FS_DIROPEN_FILE, &fdir)))
+      if(R_SUCCEEDED(rc = fsFsOpenDirectory(&device->fs, fs_path, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &fdir)))
       {
         memset(st, 0, sizeof(struct stat));
         st->st_nlink = 1;
@@ -984,9 +1038,9 @@ fsdev_stat(struct _reent *r,
         return 0;
       }
     }
-    else if(type == ENTRYTYPE_FILE)
+    else if(type == FsDirEntryType_File)
     {
-      if(R_SUCCEEDED(rc = fsFsOpenFile(&device->fs, fs_path, FS_OPEN_READ, &fd)))
+      if(R_SUCCEEDED(rc = fsFsOpenFile(&device->fs, fs_path, FsOpenMode_Read, &fd)))
       {
         fsdev_file_t tmpfd = { .fd = fd };
         ret = fsdev_fstat(r, &tmpfd, st);
@@ -997,9 +1051,9 @@ fsdev_stat(struct _reent *r,
           rc = fsFsGetFileTimeStampRaw(&device->fs, fs_path, &timestamps);
           if(R_SUCCEEDED(rc) && timestamps.is_valid)
           {
-            st->st_ctime = timestamps.created;
-            st->st_mtime = timestamps.modified;
-            st->st_atime = timestamps.accessed;
+            st->st_ctime = fsdev_converttimetoutc(timestamps.created);
+            st->st_mtime = fsdev_converttimetoutc(timestamps.modified);
+            st->st_atime = fsdev_converttimetoutc(timestamps.accessed);
           }
         }
 
@@ -1048,8 +1102,8 @@ fsdev_unlink(struct _reent *r,
             const char    *name)
 {
   Result  rc;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
 
   if(fsdev_getfspath(r, name, &device, fs_path)==-1)
     return -1;
@@ -1076,25 +1130,29 @@ fsdev_chdir(struct _reent *r,
 {
   FsDir   fd;
   Result  rc;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
+
+  if(device->cwd==NULL)
+  {
+    r->_errno = ENOSYS;
+    return -1;
+  }
 
   if(fsdev_getfspath(r, name, &device, fs_path)==-1)
     return -1;
 
-  rc = fsFsOpenDirectory(&device->fs, fs_path, FS_DIROPEN_DIRECTORY | FS_DIROPEN_FILE, &fd);
+  rc = fsFsOpenDirectory(&device->fs, fs_path, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &fd);
   if(R_SUCCEEDED(rc))
   {
     fsDirClose(&fd);
-    strncpy(__cwd, fs_path, PATH_MAX);
-    __cwd[PATH_MAX] = '\0';
+    memcpy(device->cwd, fs_path, FS_MAX_PATH);
 
-    size_t __cwd_len = strlen(__cwd);
-
-    if (__cwd[__cwd_len-1] != '/' && __cwd_len < PATH_MAX)
+    size_t cwdlen = strlen(fs_path);
+    if (device->cwd[cwdlen-1] != '/' && cwdlen < FS_MAX_PATH-1)
     {
-      __cwd[__cwd_len] = '/';
-      __cwd[__cwd_len+1] = '\0';
+      device->cwd[cwdlen] = '/';
+      device->cwd[cwdlen+1] = '\0';
     }
 
     fsdev_fsdevice_cwd = device->id;
@@ -1120,35 +1178,29 @@ fsdev_rename(struct _reent *r,
             const char    *newName)
 {
   Result  rc;
-  FsEntryType type;
-  fsdev_fsdevice *device_old = NULL, *device_new = NULL;
+  FsDirEntryType type;
+  fsdev_fsdevice *device = r->deviceData;
   char fs_path_old[FS_MAX_PATH];
-  char fs_path_new[FS_MAX_PATH];
+  char*fs_path_new = __nx_dev_path_buf;
 
-  if(fsdev_getfspath(r, oldName, &device_old, fs_path_old)==-1)
+  if(fsdev_getfspath(r, oldName, &device, fs_path_old)==-1)
     return -1;
 
-  if(fsdev_getfspath(r, newName, &device_new, fs_path_new)==-1)
+  if(fsdev_getfspath(r, newName, &device, fs_path_new)==-1)
     return -1;
 
-  if(device_old->id != device_new->id)
-  {
-    r->_errno = EXDEV;
-    return -1;
-  }
-
-  rc = fsFsGetEntryType(&device_old->fs, fs_path_old, &type);
+  rc = fsFsGetEntryType(&device->fs, fs_path_old, &type);
   if(R_SUCCEEDED(rc))
   {
-    if(type == ENTRYTYPE_DIR)
+    if(type == FsDirEntryType_Dir)
     {
-      rc = fsFsRenameDirectory(&device_old->fs, fs_path_old, fs_path_new);
+      rc = fsFsRenameDirectory(&device->fs, fs_path_old, fs_path_new);
       if(R_SUCCEEDED(rc))
       return 0;
     }
-    else if(type == ENTRYTYPE_FILE)
+    else if(type == FsDirEntryType_File)
     {
-      rc = fsFsRenameFile(&device_old->fs, fs_path_old, fs_path_new);
+      rc = fsFsRenameFile(&device->fs, fs_path_old, fs_path_new);
       if(R_SUCCEEDED(rc))
       return 0;
     }
@@ -1178,8 +1230,8 @@ fsdev_mkdir(struct _reent *r,
            int           mode)
 {
   Result  rc;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
 
   if(fsdev_getfspath(r, path, &device, fs_path)==-1)
     return -1;
@@ -1208,8 +1260,8 @@ fsdev_diropen(struct _reent *r,
 {
   FsDir   fd;
   Result  rc;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
 
   if(fsdev_getfspath(r, path, &device, fs_path)==-1)
     return NULL;
@@ -1218,14 +1270,14 @@ fsdev_diropen(struct _reent *r,
   fsdev_dir_t *dir = (fsdev_dir_t*)(dirState->dirStruct);
 
   /* open the directory */
-  rc = fsFsOpenDirectory(&device->fs, fs_path, FS_DIROPEN_DIRECTORY | FS_DIROPEN_FILE, &fd);
+  rc = fsFsOpenDirectory(&device->fs, fs_path, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &fd);
   if(R_SUCCEEDED(rc))
   {
     dir->magic = FSDEV_DIRITER_MAGIC;
     dir->fd    = fd;
     dir->index = -1;
     dir->size  = 0;
-    memset(&dir->entry_data, 0, sizeof(dir->entry_data));
+    memset(fsdevDirGetEntries(dir), 0, sizeof(FsDirectoryEntry)*__nx_fsdev_direntry_cache_size);
     return dirState;
   }
 
@@ -1266,14 +1318,15 @@ fsdev_dirnext(struct _reent *r,
              struct stat   *filestat)
 {
   Result              rc;
-  size_t              entries;
+  u64                 entries;
   ssize_t             units;
   FsDirectoryEntry   *entry;
 
   /* get pointer to our data */
   fsdev_dir_t *dir = (fsdev_dir_t*)(dirState->dirStruct);
 
-  static const size_t max_entries = sizeof(dir->entry_data) / sizeof(dir->entry_data[0]);
+  const size_t max_entries = __nx_fsdev_direntry_cache_size;
+  FsDirectoryEntry *entry_data = fsdevDirGetEntries(dir);
 
   /* check if it's in the batch already */
   if(++dir->index < dir->size)
@@ -1287,8 +1340,8 @@ fsdev_dirnext(struct _reent *r,
     dir->size  = 0;
 
     /* fetch the next batch */
-    memset(dir->entry_data, 0, sizeof(dir->entry_data));
-    rc = fsDirRead(&dir->fd, 0, &entries, max_entries, dir->entry_data);
+    memset(entry_data, 0, sizeof(FsDirectoryEntry)*max_entries);
+    rc = fsDirRead(&dir->fd, 0, &entries, max_entries, entry_data);
     if(R_SUCCEEDED(rc))
     {
       if(entries == 0)
@@ -1305,13 +1358,13 @@ fsdev_dirnext(struct _reent *r,
 
   if(R_SUCCEEDED(rc))
   {
-    entry = &dir->entry_data[dir->index];
+    entry = &entry_data[dir->index];
 
     /* fill in the stat info */
     filestat->st_ino = 0;
-    if(entry->type == ENTRYTYPE_DIR)
+    if(entry->type == FsDirEntryType_Dir)
       filestat->st_mode = S_IFDIR;
-    else if(entry->type == ENTRYTYPE_FILE)
+    else if(entry->type == FsDirEntryType_File)
     {
       filestat->st_mode = S_IFREG;
       filestat->st_size = entry->fileSize;
@@ -1385,8 +1438,8 @@ fsdev_statvfs(struct _reent  *r,
              struct statvfs *buf)
 {
   Result rc=0;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char  *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
   u64 freespace = 0, total_space = 0;
 
   if(fsdev_getfspath(r, path, &device, fs_path)==-1)
@@ -1527,8 +1580,8 @@ fsdev_rmdir(struct _reent *r,
            const char    *name)
 {
   Result  rc;
-  char    fs_path[FS_MAX_PATH];
-  fsdev_fsdevice *device = NULL;
+  char   *fs_path = __nx_dev_path_buf;
+  fsdev_fsdevice *device = r->deviceData;
 
   if(fsdev_getfspath(r, name, &device, fs_path)==-1)
     return -1;
@@ -1587,7 +1640,8 @@ typedef struct
 static const error_map_t error_table[] =
 {
   /* keep this list sorted! */
-  { 0x202, ENOENT,       },
+  { 0x202, ENOENT,          },
+  { 0x402, EEXIST,          },
   { 0x2EE202, EINVAL,       },
   { 0x2EE602, ENAMETOOLONG, },
 };
@@ -1624,6 +1678,7 @@ error_cmp(const void *p1, const void *p2)
 static int
 fsdev_translate_error(Result error)
 {
+  fsdev_last_result = error;
   error_map_t key = { .fs_error = error };
   const error_map_t *rc = bsearch(&key, error_table, num_errors,
                                   sizeof(error_map_t), error_cmp);
@@ -1631,6 +1686,14 @@ fsdev_translate_error(Result error)
   if(rc != NULL)
     return rc->error;
 
-  return (int)error;
+  return EIO;
+}
+
+/*! Getter for last error code translated to errno by fsdev library.
+ *
+ *  @returns result
+ */
+Result fsdevGetLastResult(void) {
+    return fsdev_last_result;
 }
 

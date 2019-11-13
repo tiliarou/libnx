@@ -6,7 +6,7 @@
  */
 #pragma once
 #include "../types.h"
-#include "../services/sm.h"
+#include "../sf/service.h"
 #include "../services/usb.h"
 #include "../kernel/event.h"
 
@@ -27,6 +27,7 @@ typedef enum {
 } UsbHsInterfaceFilterFlags;
 
 /// Interface filtering struct. When the associated flag bit is set, the associated descriptor field and struct field are compared, on mismatch the interface is filtered out.
+/// [7.0.0+]: The filter struct has to be unique, it can't be used by anything else (including other processes). Hence, Flags has to be non-zero. When initialized with usb:hs:a and VID and/or PID filtering is enabled, the VID/PID will be checked against a blacklist.
 typedef struct {
     u16 Flags;              ///< See \ref UsbHsInterfaceFilterFlags. Setting this to 0 is equivalent to disabling filtering.
     u16 idVendor;
@@ -42,6 +43,7 @@ typedef struct {
 } UsbHsInterfaceFilter;
 
 /// Descriptors which are not available are set to all-zero.
+/// The INPUT/OUTPUT endpoint descriptors were swapped with [8.0.0+], libnx converts this struct to the newer layout when running on pre-8.0.0.
 typedef struct {
     s32 ID;
     u32 deviceID_2;
@@ -49,13 +51,13 @@ typedef struct {
 
     struct usb_interface_descriptor interface_desc;
     u8 pad_x15[0x7];
-    struct usb_endpoint_descriptor output_endpoint_descs[15];
-    u8 pad_x85[0x7];
     struct usb_endpoint_descriptor input_endpoint_descs[15];
+    u8 pad_x85[0x7];
+    struct usb_endpoint_descriptor output_endpoint_descs[15];
     u8 pad_xf5[0x6];
-    struct usb_ss_endpoint_companion_descriptor output_ss_endpoint_companion_descs[15];  ///< ?
+    struct usb_ss_endpoint_companion_descriptor input_ss_endpoint_companion_descs[15];  ///< ?
     u8 pad_x155[0x6];
-    struct usb_ss_endpoint_companion_descriptor input_ss_endpoint_companion_descs[15];   ///< ?
+    struct usb_ss_endpoint_companion_descriptor output_ss_endpoint_companion_descs[15]; ///< ?
     u8 pad_x1b5[0x3];
 } PACKED UsbHsInterfaceInfo;
 
@@ -99,9 +101,14 @@ typedef struct {
     struct usb_endpoint_descriptor desc;
 } UsbHsClientEpSession;
 
-/// Initialize/exit usb:hs.
+/// Initialize usb:hs.
 Result usbHsInitialize(void);
+
+/// Exit usb:hs.
 void usbHsExit(void);
+
+/// Gets the Service object for the actual usb:hs service session.
+Service* usbHsGetServiceSession(void);
 
 /// Returns the Event loaded during init with autoclear=false.
 /// Signaled when a device was removed.
@@ -136,12 +143,12 @@ Result usbHsQueryAcquiredInterfaces(UsbHsInterface* interfaces, size_t interface
 
 /**
  * @brief Creates an event which is signaled when an interface is available which passes the filtering checks.
- * @param[out] event Event object.
+ * @param[out] out_event Event object.
  * @param[in] autoclear Event autoclear.
  * @param[in] index Event index, must be 0..2.
  * @param[in] filter \ref UsbHsInterfaceFilter.
  */
-Result usbHsCreateInterfaceAvailableEvent(Event* event, bool autoclear, u8 index, const UsbHsInterfaceFilter* filter);
+Result usbHsCreateInterfaceAvailableEvent(Event* out_event, bool autoclear, u8 index, const UsbHsInterfaceFilter* filter);
 
 /**
  * @brief Destroys an event setup by \ref usbHsCreateInterfaceAvailableEvent. This *must* be used at some point during cleanup.
@@ -195,7 +202,7 @@ Result usbHsIfGetInterface(UsbHsClientIfSession* s, UsbHsInterfaceInfo* inf);
  */
 Result usbHsIfGetAlternateInterface(UsbHsClientIfSession* s, UsbHsInterfaceInfo* inf, u8 id);
 
-/// On 1.0.0 this is stubbed, just returns 0 with out=0.
+/// On [1.0.0] this is stubbed, just returns 0 with out=0.
 Result usbHsIfGetCurrentFrame(UsbHsClientIfSession* s, u32* out);
 
 /// Uses a control transfer, this will block until the transfer finishes. The buffer address and size should be aligned to 0x1000-bytes, where wLength is the original size.

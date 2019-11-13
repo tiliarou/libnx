@@ -6,13 +6,9 @@
  */
 #pragma once
 
+#include "../types.h"
 #include "../audio/audio.h"
-
-#if __cplusplus >= 201402L
-#define AUDREN_CONSTEXPR constexpr
-#else
-#define AUDREN_CONSTEXPR static inline
-#endif
+#include "../sf/service.h"
 
 #define AUDREN_TIMER_FREQ_HZ           200.0f
 #define AUDREN_TIMER_PERIOD_MS         5.0f
@@ -286,12 +282,12 @@ static inline u32 audrenGetRevision(void)
     return g_audrenRevision;
 }
 
-AUDREN_CONSTEXPR int audrenGetMemPoolCount(const AudioRendererConfig* config)
+NX_CONSTEXPR int audrenGetMemPoolCount(const AudioRendererConfig* config)
 {
     return config->num_effects + 4 * config->num_voices;
 }
 
-AUDREN_CONSTEXPR size_t audrenGetInputParamSize(const AudioRendererConfig* config)
+NX_CONSTEXPR size_t audrenGetInputParamSize(const AudioRendererConfig* config)
 {
     size_t size = 0;
     size += sizeof(AudioRendererUpdateDataHeader);
@@ -306,7 +302,7 @@ AUDREN_CONSTEXPR size_t audrenGetInputParamSize(const AudioRendererConfig* confi
     return size;
 }
 
-AUDREN_CONSTEXPR size_t audrenGetOutputParamSize(const AudioRendererConfig* config)
+NX_CONSTEXPR size_t audrenGetOutputParamSize(const AudioRendererConfig* config)
 {
     size_t size = 0;
     size += sizeof(AudioRendererUpdateDataHeader);
@@ -319,8 +315,15 @@ AUDREN_CONSTEXPR size_t audrenGetOutputParamSize(const AudioRendererConfig* conf
     return size;
 }
 
+/// Initialize audren.
 Result audrenInitialize(const AudioRendererConfig* config);
+
+/// Exit audren.
 void audrenExit(void);
+
+/// Gets the Service object for IAudioRenderer.
+Service* audrenGetServiceSession_AudioRenderer(void);
+
 void audrenWaitFrame(void);
 Result audrenGetState(u32* out_state);
 Result audrenRequestUpdateAudioRenderer(const void* in_param_buf, size_t in_param_buf_size, void* out_param_buf, size_t out_param_buf_size, void* perf_buf, size_t perf_buf_size);
